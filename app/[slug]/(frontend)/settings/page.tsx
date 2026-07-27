@@ -72,6 +72,13 @@ interface Settings {
     waBlastNumber: string;
     waAdminNumber: string;
     waOwnerNumber: string;
+    // WA Provider (lib/waProvider.ts)
+    waProvider: "fonnte" | "balesotomatis";
+    balesotomatisMode: "unofficial" | "waba";
+    balesotomatisApiKey: string;
+    balesotomatisNumberId: string;
+    balesotomatisSecretKey: string;
+    balesotomatisLicensesKey: string;
     greetingEnabled: boolean;
     membershipExpiryReminderDays: number;
     packageExpiryReminderDays: number;
@@ -186,6 +193,12 @@ export default function SettingsPage() {
         waBlastNumber: "",
         waAdminNumber: "",
         waOwnerNumber: "",
+        waProvider: "balesotomatis",
+        balesotomatisMode: "unofficial",
+        balesotomatisApiKey: "",
+        balesotomatisNumberId: "",
+        balesotomatisSecretKey: "",
+        balesotomatisLicensesKey: "",
         greetingEnabled: true,
         membershipExpiryReminderDays: 30,
         packageExpiryReminderDays: 30,
@@ -232,6 +245,8 @@ export default function SettingsPage() {
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState({ type: "", text: "" });
     const [waPushLoading, setWaPushLoading] = useState(false);
+    const [testingWaConnection, setTestingWaConnection] = useState(false);
+    const [waConnectionTestResult, setWaConnectionTestResult] = useState<{ success: boolean; message: string; devices?: any[] } | null>(null);
     const [waPushResult, setWaPushResult] = useState<{ total: number; sent: number; failed: number } | null>(null);
     const [greetingPhone, setGreetingPhone] = useState("");
     const [deletingGreeting, setDeletingGreeting] = useState(false);
@@ -352,6 +367,12 @@ export default function SettingsPage() {
                     waBlastNumber: data.data.waBlastNumber || "",
                     waAdminNumber: data.data.waAdminNumber || "",
                     waOwnerNumber: data.data.waOwnerNumber || "",
+                    waProvider: data.data.waProvider || "fonnte",
+                    balesotomatisMode: data.data.balesotomatisMode || "unofficial",
+                    balesotomatisApiKey: data.data.balesotomatisApiKey || "",
+                    balesotomatisNumberId: data.data.balesotomatisNumberId || "",
+                    balesotomatisSecretKey: data.data.balesotomatisSecretKey || "",
+                    balesotomatisLicensesKey: data.data.balesotomatisLicensesKey || "",
                     greetingEnabled: data.data.greetingEnabled ?? true,
                     membershipExpiryReminderDays: data.data.membershipExpiryReminderDays || 30,
                     packageExpiryReminderDays: data.data.packageExpiryReminderDays || 30,
@@ -452,6 +473,49 @@ export default function SettingsPage() {
             setMessage({ type: "error", text: "Failed to trigger WhatsApp push test" });
         } finally {
             setWaPushLoading(false);
+        }
+    };
+
+    const handleTestWaConnection = async () => {
+        setTestingWaConnection(true);
+        setWaConnectionTestResult(null);
+
+        try {
+            const payload =
+                settings.balesotomatisMode === "waba"
+                    ? { mode: "waba", secretKey: settings.balesotomatisSecretKey, licensesKey: settings.balesotomatisLicensesKey }
+                    : { mode: "unofficial", apiKey: settings.balesotomatisApiKey };
+
+            const res = await fetch("/api/settings/wa-provider/test-connection", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-store-slug": slug },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+
+            if (!data.success) {
+                setWaConnectionTestResult({ success: false, message: data.error || "Koneksi gagal" });
+                return;
+            }
+
+            if (settings.balesotomatisMode === "unofficial") {
+                const devices = data.devices || [];
+                const connected = devices.filter((d: any) => d.state_connection === "connected");
+                setWaConnectionTestResult({
+                    success: true,
+                    message: connected.length > 0
+                        ? `Terhubung. ${connected.length} device aktif.`
+                        : "API key valid, tapi belum ada nomor yang di-scan QR.",
+                    devices,
+                });
+            } else {
+                setWaConnectionTestResult({ success: true, message: data.message || "Koneksi WABA berhasil." });
+            }
+        } catch (error) {
+            console.error("Error testing WA connection:", error);
+            setWaConnectionTestResult({ success: false, message: "Gagal menghubungi server." });
+        } finally {
+            setTestingWaConnection(false);
         }
     };
 
@@ -1313,27 +1377,220 @@ export default function SettingsPage() {
                     </div>
                 </div>
 
-                {/* WhatsApp Settings (Fonnte) */}
+                {/* WhatsApp Provider */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                         <MessageSquare className="w-5 h-5 text-green-600" />
-                        WhatsApp Settings (Fonnte API)
+                        WhatsApp Provider
                     </h2>
                     <div className="space-y-4">
-                        <div className="grid grid-cols-1 gap-4">
-                            <FormInput
-                                label="Fonnte API Token"
-                                type="password"
-                                value={settings.fonnteToken}
-                                onChange={(e) => setSettings({ ...settings, fonnteToken: e.target.value })}
-                                placeholder="Your Fonnte Token"
-                            />
-                            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                                <p className="text-xs text-yellow-800">
-                                    <strong>Note:</strong> Get your Token from <a href="https://fonnte.com" target="_blank" rel="noopener noreferrer" className="underline">Fonnte API Dashboard</a>. This will override the token from `.env` file if provided.
-                                </p>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Provider</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                {(["fonnte", "balesotomatis"] as const).map((p) => (
+                                    <button
+                                        key={p}
+                                        type="button"
+                                        onClick={() => {
+                                            setSettings({ ...settings, waProvider: p });
+                                            setWaConnectionTestResult(null);
+                                        }}
+                                        className={`p-3 rounded-lg border-2 text-sm font-medium text-left transition ${
+                                            settings.waProvider === p
+                                                ? "border-green-500 bg-green-50 text-green-700"
+                                                : "border-gray-200 text-gray-600 hover:border-gray-300"
+                                        }`}
+                                    >
+                                        {p === "fonnte" ? "Fonnte (Legacy)" : "BalesOtomatis.id"}
+                                        <div className="text-xs font-normal text-gray-400 mt-0.5">
+                                            {p === "fonnte" ? "Token tunggal, gak disarankan buat tenant baru" : "Scan QR atau WABA resmi"}
+                                        </div>
+                                    </button>
+                                ))}
                             </div>
                         </div>
+
+                        {settings.waProvider === "fonnte" ? (
+                            <div className="grid grid-cols-1 gap-4">
+                                <FormInput
+                                    label="Fonnte API Token"
+                                    type="password"
+                                    value={settings.fonnteToken}
+                                    onChange={(e) => setSettings({ ...settings, fonnteToken: e.target.value })}
+                                    placeholder="Your Fonnte Token"
+                                />
+                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <p className="text-xs text-yellow-800">
+                                        <strong>Note:</strong> Get your Token from <a href="https://fonnte.com" target="_blank" rel="noopener noreferrer" className="underline">Fonnte API Dashboard</a>. This will override the token from `.env` file if provided.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Mode Koneksi</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {(["unofficial", "waba"] as const).map((m) => (
+                                            <button
+                                                key={m}
+                                                type="button"
+                                                onClick={() => {
+                                                    setSettings({ ...settings, balesotomatisMode: m });
+                                                    setWaConnectionTestResult(null);
+                                                }}
+                                                className={`p-3 rounded-lg border-2 text-sm font-medium text-left transition ${
+                                                    settings.balesotomatisMode === m
+                                                        ? "border-green-500 bg-green-50 text-green-700"
+                                                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                                                }`}
+                                            >
+                                                {m === "unofficial" ? "Scan QR (Un-Official)" : "WhatsApp Business API (Resmi)"}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {settings.balesotomatisMode === "unofficial" ? (
+                                    <div className="grid grid-cols-1 gap-4">
+                                        <FormInput
+                                            label="API Key"
+                                            type="password"
+                                            value={settings.balesotomatisApiKey}
+                                            onChange={(e) => setSettings({ ...settings, balesotomatisApiKey: e.target.value })}
+                                            placeholder="Dari app.balesotomatis.id/rest-api"
+                                        />
+                                        <FormInput
+                                            label="Number ID"
+                                            value={settings.balesotomatisNumberId}
+                                            onChange={(e) => setSettings({ ...settings, balesotomatisNumberId: e.target.value })}
+                                            placeholder="ID device yang sudah di-scan QR"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-4">
+                                        <FormInput
+                                            label="Secret Key"
+                                            type="password"
+                                            value={settings.balesotomatisSecretKey}
+                                            onChange={(e) => setSettings({ ...settings, balesotomatisSecretKey: e.target.value })}
+                                        />
+                                        <FormInput
+                                            label="Licenses Key"
+                                            value={settings.balesotomatisLicensesKey}
+                                            onChange={(e) => setSettings({ ...settings, balesotomatisLicensesKey: e.target.value })}
+                                            placeholder="WB-xxxx"
+                                        />
+                                        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                            <p className="text-xs text-blue-800">
+                                                Mode ini butuh customer chat duluan dalam 24 jam terakhir untuk pesan bebas teks
+                                                (reminder/notifikasi). Di luar window itu, cuma template pre-approved Meta yang bisa dikirim.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <p className="text-xs text-yellow-800">
+                                        Ambil kredensial dari <a href="https://app.balesotomatis.id/rest-api" target="_blank" rel="noopener noreferrer" className="underline">app.balesotomatis.id/rest-api</a>.
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={handleTestWaConnection}
+                                        disabled={testingWaConnection}
+                                        className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                                    >
+                                        {testingWaConnection ? "Menguji..." : settings.balesotomatisMode === "waba" ? "🔄 Sync & Cek Status Template Meta" : "Test Koneksi"}
+                                    </button>
+                                    {waConnectionTestResult && (
+                                        <span className={`text-sm ${waConnectionTestResult.success ? "text-green-600" : "text-red-600"}`}>
+                                            {waConnectionTestResult.message}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {waConnectionTestResult?.devices && waConnectionTestResult.devices.length > 0 && (
+                                    <div className="border border-gray-200 rounded-lg divide-y">
+                                        {waConnectionTestResult.devices.map((d: any) => (
+                                            <div key={d.number_id} className="p-3 flex items-center justify-between text-sm">
+                                                <div>
+                                                    <div className="font-medium text-gray-800">{d.number_whatsapp || "-"}</div>
+                                                    <div className="text-xs text-gray-400">Number ID: {d.number_id}</div>
+                                                </div>
+                                                <span className={`text-xs px-2 py-1 rounded-full ${d.state_connection === "connected" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                                                    {d.state_connection}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {waConnectionTestResult?.templates && waConnectionTestResult.templates.length > 0 && (
+                                    <div className="mt-4 border border-green-200 rounded-xl bg-green-50/50 p-4 space-y-3">
+                                        <div className="flex items-center justify-between border-b border-green-200 pb-2">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+                                                <h4 className="font-semibold text-sm text-gray-900">Daftar Template WABA Resmi (Status Meta)</h4>
+                                            </div>
+                                            <span className="text-xs bg-green-100 text-green-800 font-medium px-2 py-0.5 rounded-full">
+                                                {waConnectionTestResult.templates.length} Template
+                                            </span>
+                                        </div>
+                                        <div className="divide-y divide-gray-200 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                                            {waConnectionTestResult.templates.map((t: any, idx: number) => {
+                                                const tName = t.name || t.template_name || `Template #${idx + 1}`;
+                                                const tStatus = String(t.status || t.template_status || "UNKNOWN").toUpperCase();
+                                                const tLang = t.language || t.template_language || "id";
+                                                const tCat = t.category || t.template_category || "UTILITY";
+                                                
+                                                const isApproved = tStatus === "APPROVED";
+                                                const isPending = tStatus === "PENDING" || tStatus === "IN_REVIEW";
+                                                const isRejected = tStatus === "REJECTED";
+
+                                                return (
+                                                    <div key={t.id || tName} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-gray-50 transition-colors">
+                                                        <div className="space-y-1">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-semibold text-sm text-gray-900 font-mono">{tName}</span>
+                                                                <span className="text-[10px] uppercase tracking-wider bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">
+                                                                    {tLang} • {tCat}
+                                                                </span>
+                                                            </div>
+                                                            {t.components && (
+                                                                <p className="text-xs text-gray-500 line-clamp-1">
+                                                                    {t.components.find((c: any) => c.type === 'BODY')?.text || "Template WABA tersinkronisasi"}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center self-start sm:self-center">
+                                                            {isApproved ? (
+                                                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                                                    <span>🟢</span> Approved (Siap Dipakai!)
+                                                                </span>
+                                                            ) : isPending ? (
+                                                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                                                                    <span>🟡</span> Pending Review Meta
+                                                                </span>
+                                                            ) : isRejected ? (
+                                                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300">
+                                                                    <span>🔴</span> Rejected Meta
+                                                                </span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-gray-100 text-gray-700">
+                                                                    <span>⚪</span> {tStatus}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -1892,7 +2149,7 @@ export default function SettingsPage() {
                                                 <div>
                                                     <p className="text-sm font-semibold text-gray-800">{log.phoneNormalized}</p>
                                                     <p className="text-[11px] text-gray-500">
-                                                        Raw: {log.phoneRaw || '-'} | Greeting: {log.greetingSentAt ? new Date(log.greetingSentAt).toLocaleString() : '-'}
+                                                        Raw: {log.phoneRaw || '-'} | Greeting: {log.greetingSentAt ? new Date(log.greetingSentAt).toLocaleString('id-ID') : '-'}
                                                     </p>
                                                 </div>
                                                 <button

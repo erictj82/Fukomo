@@ -52,7 +52,8 @@ export async function GET(request: NextRequest, props: any) {
         const reminderDays = settings?.membershipExpiryReminderDays || 30;
         const storeName = settings?.storeName || 'Salon';
         const loyaltyPointValue = settings?.loyaltyPointValue || 0;
-        const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
+        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigFromSettings(settings);
 
         const now = new Date();
         const futureDate = new Date();
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest, props: any) {
                 `- ${storeName}`;
 
             try {
-                const result = await sendWhatsApp(customer.phone!, message, fonnteToken);
+                const result = await sendWhatsApp(customer.phone!, message, waConfig);
                 if (result.success) sentCount++;
                 else errors.push(`${customer.name}: ${result.error}`);
             } catch (err: any) {

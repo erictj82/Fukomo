@@ -280,7 +280,7 @@ export default function ReportsPage() {
 
     const formatCurrency = (val: any) => {
         const num = parseFloat(val);
-        return isNaN(num) ? `${settings.symbol}0` : `${settings.symbol}${num.toLocaleString()}`;
+        return isNaN(num) ? `${settings.symbol}0` : `${settings.symbol}${num.toLocaleString('id-ID')}`;
     };
 
     const openInvoicePreview = async (invoiceId: string) => {

@@ -184,7 +184,7 @@ export default async function DashboardPage(props: any) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
                     title="Total Revenue"
-                    value={`${currencySymbol}${todaysSales.toLocaleString()}`}
+                    value={`${currencySymbol}${todaysSales.toLocaleString('id-ID')}`}
                     icon={DollarSign}
                     color="green"
                     trend=""

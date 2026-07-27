@@ -449,8 +449,9 @@ export async function POST(request: NextRequest, props: any) {
                 `Batas minimum: ${updatedProduct.alertQuantity}\n\n` +
                 `Segera lakukan pemesanan stok.`;
 
-              const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
-              await sendWhatsApp(adminPhone, message, fonnteToken);
+              const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigFromSettings(settings);
+              await sendWhatsApp(adminPhone, message, waConfig);
             }
           } catch (waError) {
             console.error(
@@ -518,8 +519,9 @@ export async function POST(request: NextRequest, props: any) {
                   `Stok saat ini: ${updatedProduct.stock}\n` +
                   `Batas minimum: ${updatedProduct.alertQuantity}\n\n` +
                   `Segera lakukan pemesanan stok.`;
-                const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
-                await sendWhatsApp(adminPhone, message, fonnteToken);
+                const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigFromSettings(settings);
+                await sendWhatsApp(adminPhone, message, waConfig);
               }
             } catch (waError) {
               console.error(`[LowStock] WA notification error for product ${mat.product}:`, waError);

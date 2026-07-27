@@ -39,7 +39,7 @@ export default function CashDrawerPage() {
     const [ownerPassword, setOwnerPassword] = useState("");
 
     const formatCurrency = (val: number) => {
-        return `${settings?.symbol || 'Rp'}${val.toLocaleString()}`;
+        return `${settings?.symbol || 'Rp'}${val.toLocaleString('id-ID')}`;
     };
 
     const fetchData = async () => {

@@ -10,7 +10,8 @@ export const authConfig = {
             const pathParts = nextUrl.pathname.split('/').filter(Boolean);
             // pathParts[0] could be a slug like "pusat", "bintaro", or "api"
             const isApiRoute = pathParts[0] === 'api';
-            const slugSegment = !isApiRoute ? pathParts[0] : null;
+            const nonSlugSegments = ['api', 'admin', 'register', 'login', 'setup'];
+            const slugSegment = pathParts[0] && !nonSlugSegments.includes(pathParts[0]) ? pathParts[0] : null;
             // The "page" part is the path after the slug, e.g. /pusat/login -> "login"
             const pageSegment = slugSegment ? pathParts.slice(1).join('/') : pathParts.join('/');
 
@@ -36,6 +37,11 @@ export const authConfig = {
                 nextUrl.pathname.startsWith('/api/customers/portal');
 
             const isPublicRoute = isPublicPage || isPublicApi;
+
+            // Redirect /login to /pusat/login
+            if (pageSegment === 'login' && !slugSegment) {
+                return Response.redirect(new URL('/pusat/login', nextUrl));
+            }
 
             // Redirect logic
             if (!isLoggedIn && !isPublicRoute) {

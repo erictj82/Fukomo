@@ -342,19 +342,19 @@ export default function PayrollPage() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                                {settings.symbol}{(payroll.baseSalary || 0).toLocaleString()}
+                                                {settings.symbol}{(payroll.baseSalary || 0).toLocaleString('id-ID')}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
-                                                {settings.symbol}{(payroll.totalCommission || 0).toLocaleString()}
+                                                {settings.symbol}{(payroll.totalCommission || 0).toLocaleString('id-ID')}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-emerald-600">
-                                                {settings.symbol}{(payroll.totalSellingCommission || 0).toLocaleString()}
+                                                {settings.symbol}{(payroll.totalSellingCommission || 0).toLocaleString('id-ID')}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-purple-600">
-                                                {settings.symbol}{(payroll.totalTips || 0).toLocaleString()}
+                                                {settings.symbol}{(payroll.totalTips || 0).toLocaleString('id-ID')}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                                                {settings.symbol}{(payroll.totalAmount || 0).toLocaleString()}
+                                                {settings.symbol}{(payroll.totalAmount || 0).toLocaleString('id-ID')}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border ${getStatusColor(payroll.status)}`}>
@@ -498,23 +498,23 @@ export default function PayrollPage() {
                                         <div className="grid grid-cols-2 gap-2 text-[11px] bg-gray-50/80 rounded-xl p-3 border border-gray-100 mt-2">
                                             <div className="flex justify-between items-center border-b border-gray-200 pb-1.5 pt-0.5">
                                                 <span className="text-gray-500 font-medium">Salary</span>
-                                                <span className="font-bold text-gray-900">{settings.symbol}{(payroll.baseSalary || 0).toLocaleString()}</span>
+                                                <span className="font-bold text-gray-900">{settings.symbol}{(payroll.baseSalary || 0).toLocaleString('id-ID')}</span>
                                             </div>
                                             <div className="flex justify-between items-center border-b border-gray-200 pb-1.5 pt-0.5">
                                                 <span className="text-gray-500 font-medium">Comm.</span>
-                                                <span className="font-bold text-green-600">{settings.symbol}{(payroll.totalCommission || 0).toLocaleString()}</span>
+                                                <span className="font-bold text-green-600">{settings.symbol}{(payroll.totalCommission || 0).toLocaleString('id-ID')}</span>
                                             </div>
                                             <div className="flex justify-between items-center border-b border-gray-200 pb-1.5 pt-0.5">
                                                 <span className="text-gray-500 font-medium">Sell Comm.</span>
-                                                <span className="font-bold text-emerald-600">{settings.symbol}{(payroll.totalSellingCommission || 0).toLocaleString()}</span>
+                                                <span className="font-bold text-emerald-600">{settings.symbol}{(payroll.totalSellingCommission || 0).toLocaleString('id-ID')}</span>
                                             </div>
                                             <div className="flex justify-between items-center pt-1">
                                                 <span className="text-gray-500 font-medium">Tips</span>
-                                                <span className="font-bold text-purple-600">{settings.symbol}{(payroll.totalTips || 0).toLocaleString()}</span>
+                                                <span className="font-bold text-purple-600">{settings.symbol}{(payroll.totalTips || 0).toLocaleString('id-ID')}</span>
                                             </div>
                                             <div className="flex justify-between items-center pt-1">
                                                 <span className="text-blue-800 font-bold uppercase tracking-wide">Total</span>
-                                                <span className="font-black text-blue-900 bg-blue-100/50 px-1 py-0.5 rounded">{settings.symbol}{(payroll.totalAmount || 0).toLocaleString()}</span>
+                                                <span className="font-black text-blue-900 bg-blue-100/50 px-1 py-0.5 rounded">{settings.symbol}{(payroll.totalAmount || 0).toLocaleString('id-ID')}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -627,19 +627,19 @@ export default function PayrollPage() {
                         <div className="space-y-2">
                             <div className="flex justify-between py-2 border-b">
                                 <span className="text-gray-600">Base Salary</span>
-                                <span className="font-semibold">{settings.symbol}{(selectedPayroll.baseSalary || 0).toLocaleString()}</span>
+                                <span className="font-semibold">{settings.symbol}{(selectedPayroll.baseSalary || 0).toLocaleString('id-ID')}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b">
                                 <span className="text-gray-600">Total Commission</span>
-                                <span className="font-semibold text-green-600">{settings.symbol}{(selectedPayroll.totalCommission || 0).toLocaleString()}</span>
+                                <span className="font-semibold text-green-600">{settings.symbol}{(selectedPayroll.totalCommission || 0).toLocaleString('id-ID')}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b">
                                 <span className="text-gray-600">Total Selling Commission</span>
-                                <span className="font-semibold text-emerald-600">{settings.symbol}{(selectedPayroll.totalSellingCommission || 0).toLocaleString()}</span>
+                                <span className="font-semibold text-emerald-600">{settings.symbol}{(selectedPayroll.totalSellingCommission || 0).toLocaleString('id-ID')}</span>
                             </div>
                             <div className="flex justify-between py-2 border-b">
                                 <span className="text-gray-600">Total Tips</span>
-                                <span className="font-semibold text-purple-600">{settings.symbol}{(selectedPayroll.totalTips || 0).toLocaleString()}</span>
+                                <span className="font-semibold text-purple-600">{settings.symbol}{(selectedPayroll.totalTips || 0).toLocaleString('id-ID')}</span>
                             </div>
 
                             <div className="pt-2">
@@ -675,7 +675,7 @@ export default function PayrollPage() {
                             <div className="flex justify-between py-3 bg-blue-50 px-3 rounded-lg mt-2">
                                 <span className="font-bold text-gray-900">Final Total</span>
                                 <span className="font-bold text-blue-900 text-lg">
-                                    {settings.symbol}{((selectedPayroll.baseSalary || 0) + (selectedPayroll.totalCommission || 0) + (selectedPayroll.totalSellingCommission || 0) + (selectedPayroll.totalTips || 0) + editPayrollData.bonuses - editPayrollData.deductions).toLocaleString()}
+                                    {settings.symbol}{((selectedPayroll.baseSalary || 0) + (selectedPayroll.totalCommission || 0) + (selectedPayroll.totalSellingCommission || 0) + (selectedPayroll.totalTips || 0) + editPayrollData.bonuses - editPayrollData.deductions).toLocaleString('id-ID')}
                                 </span>
                             </div>
                         </div>

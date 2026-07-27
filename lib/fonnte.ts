@@ -1,5 +1,6 @@
 import { decryptFonnteToken } from './encryption';
 import { tryConsumeUsage } from './subscriptionEnforcement';
+import { sendViaBalesOtomatis, type WaProviderConfig } from './waProvider';
 
 export interface SendWhatsAppResult {
     success: boolean;
@@ -10,12 +11,17 @@ export interface SendWhatsAppResult {
 }
 
 /**
- * Send a WhatsApp message via Fonnte API.
+ * Send a WhatsApp message via the tenant's configured provider (Fonnte or BalesOtomatis).
  * @param phone - Target phone number
  * @param message - Message body
- * @param fonnteToken - Optional explicit Fonnte API token. When provided, skips DB lookup.
+ * @param providerConfig - Either a plain Fonnte token string (LEGACY — every existing call site
+ *   passes this today, keep working exactly as before with zero changes), or a WaProviderConfig
+ *   object (from lib/waProvider.ts::getWaProviderConfigFromSettings) to route through BalesOtomatis
+ *   instead. This dual-type param is intentional: it lets call sites migrate one at a time instead
+ *   of a single risky mass find-and-replace (see the postmortem in git history 20/7 — a previous
+ *   mass-enforcement change without staged rollout took down a live tenant).
  * @param storeId - Optional Master DB Store._id. Kalau dikasih, WA quota (SaasPlan.maxWaMessagesPerMonth)
- *   di-cek & di-consume SEBELUM kirim ke Fonnte. Sengaja OPSIONAL (bukan required) supaya
+ *   di-cek & di-consume SEBELUM kirim, terlepas dari provider mana yang dipakai. Sengaja OPSIONAL supaya
  *   call site yang belum di-update tetap jalan seperti biasa (unenforced) - lihat
  *   blueprint-teknis-internal.md section 1.4, daftar call site yang masih perlu di-migrate.
  *   Notifikasi PLATFORM (approval toko baru, dsb di lib/provisioning.ts) SENGAJA gak lewat
@@ -24,7 +30,7 @@ export interface SendWhatsAppResult {
 export async function sendWhatsApp(
     phone: string,
     message: string,
-    fonnteToken?: string,
+    providerConfig?: string | WaProviderConfig,
     storeId?: string
 ): Promise<SendWhatsAppResult> {
     if (storeId) {
@@ -42,6 +48,29 @@ export async function sendWhatsApp(
         }
     }
 
+    if (!phone || !message) {
+        return { success: false, error: 'phone and message are required' };
+    }
+
+    // providerConfig sebagai object = tenant ini udah di-migrate ke abstraksi provider baru.
+    if (providerConfig && typeof providerConfig === 'object') {
+        if (providerConfig.provider === 'balesotomatis') {
+            if (!providerConfig.balesotomatis) {
+                return { success: false, error: 'Konfigurasi BalesOtomatis kosong.' };
+            }
+            const result = await sendViaBalesOtomatis(providerConfig.balesotomatis, phone, message);
+            return result;
+        }
+        // provider === 'fonnte' tapi dibungkus object (dari getWaProviderConfigFromSettings) -
+        // lanjut ke jalur Fonnte biasa di bawah dengan token dari dalam object-nya.
+        return sendViaFonnte(phone, message, providerConfig.fonnteToken);
+    }
+
+    // providerConfig sebagai string (atau undefined) = jalur LEGACY, behavior sama persis kayak sebelumnya.
+    return sendViaFonnte(phone, message, providerConfig);
+}
+
+async function sendViaFonnte(phone: string, message: string, fonnteToken?: string): Promise<SendWhatsAppResult> {
     let token = (fonnteToken ?? '').trim();
 
     // If caller passed a token, use it as-is (caller is responsible for decrypting).

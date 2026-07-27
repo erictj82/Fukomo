@@ -70,9 +70,15 @@ export async function GET(request: NextRequest, props: any) {
             return NextResponse.json({ success: false, error: 'Access Denied: Cannot view settings' }, { status: 403 });
         }
 
-        if (settings.fonnteToken) {
-            settings.fonnteToken = decryptFonnteToken(settings.fonnteToken);
-        }
+        if (settings.fonnteToken) {
+            settings.fonnteToken = decryptFonnteToken(settings.fonnteToken);
+        }
+        try {
+            if (settings.balesotomatisApiKey) settings.balesotomatisApiKey = decryptFonnteToken(settings.balesotomatisApiKey);
+            if (settings.balesotomatisSecretKey) settings.balesotomatisSecretKey = decryptFonnteToken(settings.balesotomatisSecretKey);
+        } catch (e) {
+            // field lama/kosong yang belum pernah dienkripsi - biarin apa adanya, jangan sampai GET /api/settings gagal total
+        }
         return NextResponse.json({ success: true, data: settings });
     } catch (error: any) {
         console.error('Error fetching settings:', error);
@@ -127,7 +133,9 @@ export async function PUT(request: NextRequest, props: any) {
             'financialReportSections', 'allowStaffDoubleBooking', 'stockAdjustmentPassword',
             'bankTransferPassword', 'ownerTransferPassword',
             'waAppointmentReminderEnabled', 'waAppointmentReminderMinutesBefore',
-            'waAppointmentReminderDefaultTemplate', 'waNotaTemplate', 'waAdminNotaPrefix'
+            'waAppointmentReminderDefaultTemplate', 'waNotaTemplate', 'waAdminNotaPrefix',
+            'waProvider', 'balesotomatisMode', 'balesotomatisApiKey', 'balesotomatisNumberId',
+            'balesotomatisSecretKey', 'balesotomatisLicensesKey'
         ];
 
         Object.keys(body).forEach(key => {
@@ -137,9 +145,18 @@ export async function PUT(request: NextRequest, props: any) {
         });
 
         // Sanitize Mongoose ObjectIds that might be sent as empty strings
-        if (body.fonnteToken) {
-            body.fonnteToken = encryptFonnteToken(body.fonnteToken);
-        }
+        if (body.fonnteToken) {
+            body.fonnteToken = encryptFonnteToken(body.fonnteToken);
+        }
+        // encryptFonnteToken/decryptFonnteToken sebenernya generic AES encrypt/decrypt (lihat
+        // lib/encryption.ts) - dipakein juga buat kredensial BalesOtomatis biar konsisten
+        // disimpan terenkripsi, bukan bikin fungsi encrypt baru buat 2 field ini doang.
+        if (body.balesotomatisApiKey) {
+            body.balesotomatisApiKey = encryptFonnteToken(body.balesotomatisApiKey);
+        }
+        if (body.balesotomatisSecretKey) {
+            body.balesotomatisSecretKey = encryptFonnteToken(body.balesotomatisSecretKey);
+        }
 
         if (body.birthdayVoucherId === "") {
             body.birthdayVoucherId = null;
@@ -153,9 +170,19 @@ export async function PUT(request: NextRequest, props: any) {
             { new: true, upsert: true, runValidators: true }
         );
 
-        if (settings.fonnteToken) {
-            settings.fonnteToken = decryptFonnteToken(settings.fonnteToken);
-        }
+        if (settings.fonnteToken) {
+            settings.fonnteToken = decryptFonnteToken(settings.fonnteToken);
+        }
+        try {
+            if (settings.balesotomatisApiKey) {
+                settings.balesotomatisApiKey = decryptFonnteToken(settings.balesotomatisApiKey);
+            }
+            if (settings.balesotomatisSecretKey) {
+                settings.balesotomatisSecretKey = decryptFonnteToken(settings.balesotomatisSecretKey);
+            }
+        } catch (e) {
+            console.error('Error decrypting balesotomatis credentials in PUT:', e);
+        }
         return NextResponse.json({ success: true, data: settings });
     } catch (error: any) {
         console.error('Error updating settings:', error);

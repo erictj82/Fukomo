@@ -256,7 +256,7 @@ export default function StaffPage() {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className="text-sm font-bold text-gray-900">{settings.symbol}{staff.salary?.toLocaleString() || 0}</span>
+                                                <span className="text-sm font-bold text-gray-900">{settings.symbol}{staff.salary?.toLocaleString('id-ID') || 0}</span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                                                 <div className="relative flex justify-end dropdown-trigger">
@@ -386,7 +386,7 @@ export default function StaffPage() {
                                         <div className="grid grid-cols-1 gap-2 text-sm bg-gray-50/80 rounded-xl p-3 border border-gray-100 mt-2">
                                             <div>
                                                 <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1">Salary</p>
-                                                <span className="font-bold text-gray-900">{settings.symbol}{staff.salary?.toLocaleString() || 0}</span>
+                                                <span className="font-bold text-gray-900">{settings.symbol}{staff.salary?.toLocaleString('id-ID') || 0}</span>
                                             </div>
                                         </div>
                                     </div>

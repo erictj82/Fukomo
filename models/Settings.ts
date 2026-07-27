@@ -128,6 +128,24 @@ const SettingsSchema = new mongoose.Schema({
     fonnteDeviceRegisteredAt: {
         type: Date,
     },
+    // Provider WA yang dipakai tenant ini buat kirim pesan (lib/waProvider.ts yang baca ini).
+    // Default 'fonnte' biar tenant lama yang belum pernah isi field ini tetap jalan seperti biasa.
+    waProvider: {
+        type: String,
+        enum: ['fonnte', 'balesotomatis'],
+        default: 'balesotomatis',
+    },
+    // BalesOtomatis.id punya 2 mode koneksi yang auth & endpoint-nya BEDA (lihat lib/waProvider.ts):
+    // 'unofficial' = scan QR (apiKey + numberId), 'waba' = WhatsApp Business API resmi (secretKey + licensesKey)
+    balesotomatisMode: {
+        type: String,
+        enum: ['unofficial', 'waba'],
+        default: 'unofficial',
+    },
+    balesotomatisApiKey: { type: String, default: '' },      // mode unofficial
+    balesotomatisNumberId: { type: String, default: '' },    // mode unofficial — id device yang tersambung QR
+    balesotomatisSecretKey: { type: String, default: '' },   // mode waba
+    balesotomatisLicensesKey: { type: String, default: '' }, // mode waba
     // Override manual max pesan per hari (0 = auto berdasarkan umur nomor)
     fonnteMaxDailyMessages: {
         type: Number,

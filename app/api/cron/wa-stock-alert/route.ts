@@ -50,7 +50,8 @@ export async function GET(request: NextRequest, props: any) {
         // === END CHECK ===
 
         const adminPhone = settings?.waAdminNumber;
-        const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
+        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigFromSettings(settings);
 
         if (!adminPhone) {
             return NextResponse.json({
@@ -93,7 +94,7 @@ export async function GET(request: NextRequest, props: any) {
             `${productList}\n\n` +
             `Segera lakukan restok! 📦`;
 
-        const result = await sendWhatsApp(adminPhone, message, fonnteToken);
+        const result = await sendWhatsApp(adminPhone, message, waConfig);
 
         if (result.success) {
             // Mark products as notified

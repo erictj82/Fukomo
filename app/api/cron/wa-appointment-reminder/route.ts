@@ -21,12 +21,11 @@ export async function POST(request: NextRequest) {
         }
 
         const minutesBefore = settings.waAppointmentReminderMinutesBefore || 60;
-        const fonnteToken = settings.fonnteToken
-            ? decryptFonnteToken(String(settings.fonnteToken).trim())
-            : process.env.FONNTE_TOKEN;
+        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigFromSettings(settings);
 
-        if (!fonnteToken) {
-            return NextResponse.json({ error: 'Fonnte not configured' }, { status: 500 });
+        if (!waConfig || (waConfig.provider === 'fonnte' && !waConfig.fonnteToken)) {
+            return NextResponse.json({ error: 'WA Provider not configured' }, { status: 500 });
         }
 
         // Find appointments that start within the reminder window
@@ -91,14 +90,19 @@ export async function POST(request: NextRequest) {
                 const phone = normalizeIndonesianPhone(customer.phone);
                 if (!phone) continue;
 
-                await sendWhatsApp(phone, message, fonnteToken);
-                await Appointment.findByIdAndUpdate(appt._id, {
-                    reminderSent: true,
-                    reminderSentAt: new Date()
-                });
-                sent++;
+                const waResult = await sendWhatsApp(phone, message, waConfig);
+                if (waResult.success) {
+                    await Appointment.findByIdAndUpdate(appt._id, {
+                        reminderSent: true,
+                        reminderSentAt: new Date()
+                    });
+                    sent++;
+                } else {
+                    console.error(`[WA Reminder] Failed to send to ${customer.phone}:`, waResult.error);
+                    failed++;
+                }
             } catch (err) {
-                console.error(`[WA Reminder] Failed to send to ${customer.phone}:`, err);
+                console.error(`[WA Reminder] Exception for ${customer.phone}:`, err);
                 failed++;
             }
         }

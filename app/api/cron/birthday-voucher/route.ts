@@ -59,7 +59,8 @@ export async function GET(request: NextRequest, props: any) {
     }
 
     // [B09 FIX] Ambil fonnteToken dari settings agar WA bisa terkirim
-    const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
+    const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigFromSettings(settings);
 
     const voucher = await Voucher.findById(settings.birthdayVoucherId);
     if (!voucher || !voucher.isActive) {
@@ -106,7 +107,7 @@ export async function GET(request: NextRequest, props: any) {
           (voucher.expiresAt ? `📅 Berlaku sampai: ${new Date(voucher.expiresAt).toLocaleDateString("id-ID")}\n` : "") +
           `\nTerima kasih sudah menjadi member premium kami! 💕\n- ${settings.storeName || "Salon"}`;
 
-        const result = await sendWhatsApp(customer.phone, message, fonnteToken);
+        const result = await sendWhatsApp(customer.phone, message, waConfig);
 
         if (result.success) {
           // Mark as sent for this year

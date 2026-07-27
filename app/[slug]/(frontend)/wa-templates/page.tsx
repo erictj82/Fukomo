@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Edit, Plus, Search, Trash2, MessageSquareText } from "lucide-react";
@@ -27,11 +26,16 @@ const renderPreview = (message: string) => {
 };
 
 export default function WaTemplatesPage() {
-  const params = useParams();
-  const slug = params.slug as string;
+    const params = useParams();
+    const slug = params.slug as string;
     const [templates, setTemplates] = useState<WaTemplate[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState("");
+
+    const [wabaTemplates, setWabaTemplates] = useState<any[]>([]);
+    const [wabaLoading, setWabaLoading] = useState(false);
+    const [wabaError, setWabaError] = useState<string | null>(null);
+    const [isWabaMode, setIsWabaMode] = useState(false);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<WaTemplate | null>(null);
@@ -52,7 +56,28 @@ export default function WaTemplatesPage() {
 
     useEffect(() => {
         fetchTemplates();
+        fetchWabaTemplates();
     }, []);
+
+    const fetchWabaTemplates = async () => {
+        setWabaLoading(true);
+        setWabaError(null);
+        try {
+            const res = await fetch(`/api/wa/waba-templates`, { headers: { "x-store-slug": slug } });
+            const data = await res.json();
+            if (data.success) {
+                setIsWabaMode(data.isWaba);
+                setWabaTemplates(data.templates || []);
+            } else {
+                setIsWabaMode(Boolean(data.isWaba));
+                if (data.isWaba) setWabaError(data.error);
+            }
+        } catch (err: any) {
+            setWabaError("Gagal mengambil data dari Meta.");
+        } finally {
+            setWabaLoading(false);
+        }
+    };
 
     const fetchTemplates = async () => {
         setLoading(true);
@@ -190,6 +215,96 @@ export default function WaTemplatesPage() {
                     </button>
                 </PermissionGate>
             </div>
+
+            {/* WABA Meta Templates Section */}
+            {isWabaMode && (
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-200 shadow-sm p-5 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+                                <h2 className="text-lg font-bold text-gray-900">Template WhatsApp Business API Resmi (Meta)</h2>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-1">
+                                Template resmi di-approve Meta untuk pengingat (reminder) & follow-up di luar window 24 jam.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={fetchWabaTemplates}
+                            disabled={wabaLoading}
+                            className="px-4 py-2 bg-emerald-700 text-white text-sm font-semibold rounded-lg hover:bg-emerald-800 transition-all shadow-sm disabled:opacity-50 flex items-center gap-2 self-start sm:self-center"
+                        >
+                            <span>🔄</span>
+                            {wabaLoading ? "Menyiapkan..." : "Sync & Cek Status Meta"}
+                        </button>
+                    </div>
+
+                    {wabaError && (
+                        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                            {wabaError}
+                        </div>
+                    )}
+
+                    {!wabaLoading && !wabaError && wabaTemplates.length === 0 && (
+                        <div className="p-4 bg-white/80 border border-green-100 rounded-lg text-center text-sm text-gray-500">
+                            Belum ada template yang ditemukan di akun WABA Meta Anda. Buat template melalui dashboard penyedia WABA Anda, lalu klik Sync.
+                        </div>
+                    )}
+
+                    {wabaTemplates.length > 0 && (
+                        <div className="divide-y divide-gray-200 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                            {wabaTemplates.map((t: any, idx: number) => {
+                                const tName = t.name || t.template_name || `Template #${idx + 1}`;
+                                const tStatus = String(t.status || t.template_status || "UNKNOWN").toUpperCase();
+                                const tLang = t.language || t.template_language || "id";
+                                const tCat = t.category || t.template_category || "UTILITY";
+                                
+                                const isApproved = tStatus === "APPROVED";
+                                const isPending = tStatus === "PENDING" || tStatus === "IN_REVIEW";
+                                const isRejected = tStatus === "REJECTED";
+
+                                return (
+                                    <div key={t.id || tName} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-semibold text-sm text-gray-900 font-mono">{tName}</span>
+                                                <span className="text-[10px] uppercase tracking-wider bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">
+                                                    {tLang} • {tCat}
+                                                </span>
+                                            </div>
+                                            {t.components && (
+                                                <p className="text-xs text-gray-500 line-clamp-2">
+                                                    {t.components.find((c: any) => c.type === 'BODY')?.text || "Template WABA tersinkronisasi dari server Meta"}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center self-start sm:self-center">
+                                            {isApproved ? (
+                                                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-sm">
+                                                    <span>🟢</span> Approved (Siap Dipakai!)
+                                                </span>
+                                            ) : isPending ? (
+                                                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 shadow-sm">
+                                                    <span>🟡</span> Sedang Ditinjau Meta
+                                                </span>
+                                            ) : isRejected ? (
+                                                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300 shadow-sm">
+                                                    <span>🔴</span> Ditolak Meta
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-full bg-gray-100 text-gray-700">
+                                                    <span>⚪</span> {tStatus}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
 
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
                 {activeGreetingTemplate ? (

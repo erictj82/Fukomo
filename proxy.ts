@@ -21,7 +21,7 @@ export default middleware((req) => {
     } else {
         // 2. Try to get slug from URL path (if it's a direct page visit like /[slug]/login)
         const pathParts = req.nextUrl.pathname.split('/').filter(Boolean);
-        if (pathParts.length > 0 && pathParts[0] !== 'api' && pathParts[0] !== 'admin' && pathParts[0] !== 'register') {
+        if (pathParts.length > 0 && pathParts[0] !== 'api' && pathParts[0] !== 'admin' && pathParts[0] !== 'register' && pathParts[0] !== 'login') {
              requestHeaders.set('x-store-slug', pathParts[0]);
         } else {
             // 3. Try to get slug from Referer (for API calls made from the browser)
@@ -30,7 +30,7 @@ export default middleware((req) => {
                 try {
                     const url = new URL(referer);
                     const refererPathParts = url.pathname.split('/').filter(Boolean);
-                    if (refererPathParts.length > 0 && refererPathParts[0] !== 'api' && refererPathParts[0] !== 'admin' && refererPathParts[0] !== 'register') {
+                    if (refererPathParts.length > 0 && refererPathParts[0] !== 'api' && refererPathParts[0] !== 'admin' && refererPathParts[0] !== 'register' && refererPathParts[0] !== 'login') {
                         requestHeaders.set('x-store-slug', refererPathParts[0]);
                     }
                 } catch (e) {}

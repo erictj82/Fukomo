@@ -64,7 +64,7 @@ export default function ServiceChart({ data }: ServiceChartProps) {
                                     border: '1px solid #e5e7eb',
                                     boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
                                 }}
-                                formatter={(value: number) => [`${settings.symbol}${value.toLocaleString()}`, 'Revenue']}
+                                formatter={(value: number) => [`${settings.symbol}${value.toLocaleString('id-ID')}`, 'Revenue']}
                             />
                         </PieChart>
                     </ResponsiveContainer>
@@ -84,7 +84,7 @@ export default function ServiceChart({ data }: ServiceChartProps) {
                                 </span>
                             </div>
                             <span className="font-bold text-gray-900 truncate">
-                                {settings.symbol}{(entry.revenue || 0).toLocaleString()}
+                                {settings.symbol}{(entry.revenue || 0).toLocaleString('id-ID')}
                             </span>
                         </div>
                     ))}
@@ -93,3 +93,4 @@ export default function ServiceChart({ data }: ServiceChartProps) {
         </div>
     );
 }
+

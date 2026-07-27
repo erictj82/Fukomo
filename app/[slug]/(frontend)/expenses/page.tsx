@@ -253,7 +253,7 @@ export default function ExpensesPage() {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className="text-sm font-bold text-red-600">{settings.symbol}{expense.amount.toLocaleString()}</span>
+                                                <span className="text-sm font-bold text-red-600">{settings.symbol}{expense.amount.toLocaleString('id-ID')}</span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex items-center gap-1.5 text-sm text-gray-600">
@@ -374,7 +374,7 @@ export default function ExpensesPage() {
                                                 {formatDate(expense.date, settings.timezone)}
                                             </div>
                                             <div className="font-black text-red-600 text-[13px]">
-                                                {settings.symbol}{expense.amount.toLocaleString()}
+                                                {settings.symbol}{expense.amount.toLocaleString('id-ID')}
                                             </div>
                                         </div>
                                     </div>

@@ -22,6 +22,7 @@ export default function PrintInvoicePage() {
     const [deposits, setDeposits] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [sendingWa, setSendingWa] = useState(false);
+    const [sendingWaManual, setSendingWaManual] = useState(false);
     const [printing, setPrinting] = useState(false);
 
     useEffect(() => {
@@ -50,6 +51,27 @@ export default function PrintInvoicePage() {
 
     const handlePrint = () => {
         window.print();
+    };
+
+    const handleSendWaManual = async () => {
+        setSendingWaManual(true);
+        try {
+            const res = await fetch(`/api/invoices/${id}/wa-nota`, {
+                method: 'GET',
+                headers: { "x-store-slug": slug }
+            });
+            const data = await res.json();
+            if (data.success && data.waUrl) {
+                window.open(data.waUrl, '_blank');
+            } else {
+                alert(data.error || "Gagal menyiapkan pesan WA.");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Terjadi kesalahan saat menyiapkan pesan WA.");
+        } finally {
+            setSendingWaManual(false);
+        }
     };
 
     const handleSendWaNota = async () => {
@@ -152,7 +174,7 @@ export default function PrintInvoicePage() {
     return (
         <div className="min-h-screen bg-gray-100 p-4 md:p-8 print:p-0 print:m-0 print:bg-white print:min-h-0 text-black">
             {/* Header / Controls */}
-            <div className="max-w-[400px] mx-auto flex justify-between items-center mb-6 print:hidden">
+            <div className="max-w-[480px] mx-auto flex justify-between items-center mb-6 print:hidden">
                 <button
                     onClick={() => router.back()}
                     className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
@@ -160,31 +182,38 @@ export default function PrintInvoicePage() {
                     <ArrowLeft className="w-4 h-4" />
                     Back
                 </button>
-                <div className="flex gap-2">
-                    {!searchParams?.get('autoSent') && (
-                        <FormButton
-                            onClick={handleSendWaNota}
-                            icon={<MessageSquare className="w-4 h-4" />}
-                            className="bg-green-600 hover:bg-green-700 whitespace-nowrap"
-                            disabled={sendingWa}
-                        >
-                            {sendingWa ? "Mengirim..." : "Kirim WA"}
-                        </FormButton>
-                    )}
+                <div className="flex gap-1.5 flex-wrap justify-end">
+                    <FormButton
+                        onClick={handleSendWaManual}
+                        icon={<MessageSquare className="w-4 h-4" />}
+                        className="bg-emerald-600 hover:bg-emerald-700 whitespace-nowrap text-xs px-2.5 py-1.5"
+                        disabled={sendingWaManual}
+                    >
+                        {sendingWaManual ? "Membuka..." : "WA Web/App"}
+                    </FormButton>
+                    <FormButton
+                        onClick={handleSendWaNota}
+                        icon={<MessageSquare className="w-4 h-4" />}
+                        className="bg-green-700 hover:bg-green-800 whitespace-nowrap text-xs px-2.5 py-1.5"
+                        disabled={sendingWa}
+                        title="Kirim background via API (WABA / Fonnte)"
+                    >
+                        {sendingWa ? "Mengirim..." : "WA API"}
+                    </FormButton>
                     <FormButton
                         onClick={handleBluetoothPrint}
                         disabled={printing}
                         icon={<Printer className="w-4 h-4" />}
-                        className="bg-indigo-600 hover:bg-indigo-700 whitespace-nowrap"
+                        className="bg-indigo-600 hover:bg-indigo-700 whitespace-nowrap text-xs px-2.5 py-1.5"
                     >
                         {printing ? "Printing..." : "Bluetooth"}
                     </FormButton>
                     <FormButton
                         onClick={handlePrint}
                         icon={<Printer className="w-4 h-4" />}
-                        className="whitespace-nowrap"
+                        className="whitespace-nowrap text-xs px-2.5 py-1.5"
                     >
-                        Print Receipt
+                        Print
                     </FormButton>
                 </div>
             </div>

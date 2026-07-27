@@ -6,6 +6,7 @@ import { decryptFonnteToken } from "@/lib/encryption";
 import { normalizeIndonesianPhone } from "@/lib/phone";
 import { logActivity } from "@/lib/logger";
 import { getStoreIdBySlug } from "@/lib/subscriptionEnforcement";
+import { getWaProviderConfigFromSettings } from "@/lib/waProvider";
 
 function formatCurrency(amount: number): string {
     return `Rp${(amount || 0).toLocaleString('id-ID')}`;
@@ -38,12 +39,21 @@ export async function POST(request: NextRequest, props: any) {
         }
 
         const settings: any = await Settings.findOne({}).lean();
-        const fonnteToken = settings?.fonnteToken
-            ? decryptFonnteToken(String(settings.fonnteToken).trim())
-            : process.env.FONNTE_TOKEN;
 
-        if (!fonnteToken) {
-            return NextResponse.json({ success: false, error: 'Fonnte belum dikonfigurasi di Settings' }, { status: 500 });
+        const isBalesOtomatis = settings?.waProvider === 'balesotomatis';
+        let waSendConfig: string | import('@/lib/waProvider').WaProviderConfig | undefined;
+
+        if (isBalesOtomatis) {
+            waSendConfig = getWaProviderConfigFromSettings(settings);
+        } else {
+            const fonnteToken = settings?.fonnteToken
+                ? decryptFonnteToken(String(settings.fonnteToken).trim())
+                : process.env.FONNTE_TOKEN;
+
+            if (!fonnteToken) {
+                return NextResponse.json({ success: false, error: 'Fonnte belum dikonfigurasi di Settings' }, { status: 500 });
+            }
+            waSendConfig = fonnteToken;
         }
 
         // Build items text
@@ -111,12 +121,19 @@ export async function POST(request: NextRequest, props: any) {
         }
 
         const storeId = await getStoreIdBySlug(tenantSlug);
-        const waResult = await sendWhatsApp(phone, message, fonnteToken, storeId ?? undefined);
+        const waResult = await sendWhatsApp(phone, message, waSendConfig, storeId ?? undefined);
 
         if (waResult.blocked) {
             return NextResponse.json(
                 { success: false, error: waResult.error, code: 'WA_QUOTA_EXCEEDED', quota: waResult.quota },
                 { status: 403 }
+            );
+        }
+
+        if (!waResult.success) {
+            return NextResponse.json(
+                { success: false, error: waResult.error || 'Gagal mengirim pesan melalui provider WA' },
+                { status: 400 }
             );
         }
 

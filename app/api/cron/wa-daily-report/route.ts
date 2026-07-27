@@ -55,7 +55,8 @@ export async function GET(request: NextRequest, props: any) {
 
         const ownerPhone = settings?.waOwnerNumber;
         const storeName = settings?.storeName || 'Salon';
-        const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
+        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigFromSettings(settings);
 
 
 
@@ -164,7 +165,7 @@ export async function GET(request: NextRequest, props: any) {
             .replace(/{{tipsLine}}/gi, tipsLine)
             .replace(/{{totalTips}}|{{total_tips}}/gi, fmtNum(totalTips));
 
-        const result = await sendWhatsApp(ownerPhone, message, fonnteToken);
+        const result = await sendWhatsApp(ownerPhone, message, waConfig);
 
 
 

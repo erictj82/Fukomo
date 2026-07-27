@@ -51,16 +51,17 @@ const renderTemplate = (message: string, vars: Record<string, string>): string =
 };
 
 // Returns null jika greeting di-disable global atau tidak ada template aktif
-const getGreetingMessage = async (models: any): Promise<{ message: string, fonnteToken?: string } | null> => {
+const getGreetingMessage = async (models: any): Promise<{ message: string, waConfig?: import('@/lib/waProvider').WaProviderConfig } | null> => {
     const { WaTemplate, Settings } = models;
 
     // Cek global toggle dulu
-    const settings = await Settings.findOne().select('greetingEnabled fonnteToken').lean() as any;
+    const settings = await Settings.findOne().select('greetingEnabled fonnteToken waProvider balesotomatisMode balesotomatisApiKey balesotomatisNumberId balesotomatisSecretKey balesotomatisLicensesKey').lean() as any;
     if (settings?.greetingEnabled === false) {
         return null; // Greeting di-disable dari Settings — early exit
     }
 
-    const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
+    const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+    const waConfig = getWaProviderConfigFromSettings(settings);
 
     const activeGreetingTemplate = await WaTemplate.findOne({
         isGreetingEnabled: true,
@@ -74,14 +75,14 @@ const getGreetingMessage = async (models: any): Promise<{ message: string, fonnt
         .lean() as any;
 
     if (activeGreetingTemplate?.message) {
-        return { message: String(activeGreetingTemplate.message), fonnteToken };
+        return { message: String(activeGreetingTemplate.message), waConfig };
     }
 
     // Jika tidak ada template aktif, fallback ke env
     // Tapi hanya kirim jika greetingEnabled tidak secara eksplisit false
     return {
         message: process.env.WA_GREETING_MESSAGE || 'Halo, terima kasih sudah menghubungi kami. Admin salon akan membalas pesan Anda secepatnya.',
-        fonnteToken
+        waConfig
     };
 };
 
@@ -97,15 +98,16 @@ export async function POST(request: NextRequest, props: any) {
     try {
         // SEC-02 FIX: Verifikasi Signature Webhook Fonnte
         const { Settings } = models;
-        const settings = await Settings.findOne().select('fonnteToken').lean() as any;
-        const expectedToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
+        const settings = await Settings.findOne().select('fonnteToken waProvider balesotomatisMode balesotomatisApiKey balesotomatisNumberId balesotomatisSecretKey balesotomatisLicensesKey storeName').lean() as any;
+        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
+        const expectedWaConfig = getWaProviderConfigFromSettings(settings);
         
         const authHeader = request.headers.get('authorization');
         
         // Fonnte sends the token either directly or with Bearer prefix. We check both.
-        if (expectedToken) {
+        if (expectedWaConfig?.provider === 'fonnte' && expectedWaConfig.fonnteToken) {
             const incomingToken = authHeader?.replace('Bearer ', '')?.trim();
-            if (!incomingToken || incomingToken !== expectedToken) {
+            if (!incomingToken || incomingToken !== expectedWaConfig.fonnteToken) {
                 console.warn(`[FONNTE_WEBHOOK] Unauthorized access attempt. IP: ${request.headers.get('x-forwarded-for') || 'unknown'}`);
                 return NextResponse.json({ success: false, error: 'Unauthorized webhook signature' }, { status: 401 });
             }
@@ -149,11 +151,8 @@ export async function POST(request: NextRequest, props: any) {
             console.log(`[FONNTE_WEBHOOK] Opt-out: ${normalizedPhone} (${updated.modifiedCount} customer(s) updated)`);
 
             // Kirim konfirmasi opt-out
-            const { Settings } = models;
-            const settings = await Settings.findOne().select('fonnteToken storeName').lean() as any;
-            const fonnteToken = settings?.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : undefined;
             const storeName = settings?.storeName || 'Salon';
-            await sendWhatsApp(normalizedPhone, `✅ Anda telah berhenti menerima pesan promosi dari ${storeName}. Jika ingin berlangganan kembali, silakan hubungi kami.`, fonnteToken);
+            await sendWhatsApp(normalizedPhone, `✅ Anda telah berhenti menerima pesan promosi dari ${storeName}. Jika ingin berlangganan kembali, silakan hubungi kami.`, expectedWaConfig);
 
             return NextResponse.json({ success: true, optedOut: true, phone: normalizedPhone });
         }
@@ -187,10 +186,7 @@ export async function POST(request: NextRequest, props: any) {
             nama_service: process.env.SALON_NAME || 'salon kami',
         });
 
-        // Pakai fonnteToken dari helper
-        const fonnteToken = greetingData.fonnteToken;
-
-        const sendResult = await sendWhatsApp(normalizedPhone, greetingMessage, fonnteToken);
+        const sendResult = await sendWhatsApp(normalizedPhone, greetingMessage, greetingData.waConfig);
 
         if (!sendResult.success) {
             // Hapus log yang tadi di-insert supaya bisa retry
