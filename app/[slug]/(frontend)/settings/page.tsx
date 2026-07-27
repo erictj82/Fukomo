@@ -246,7 +246,7 @@ export default function SettingsPage() {
     const [message, setMessage] = useState({ type: "", text: "" });
     const [waPushLoading, setWaPushLoading] = useState(false);
     const [testingWaConnection, setTestingWaConnection] = useState(false);
-    const [waConnectionTestResult, setWaConnectionTestResult] = useState<{ success: boolean; message: string; devices?: any[] } | null>(null);
+    const [waConnectionTestResult, setWaConnectionTestResult] = useState<{ success: boolean; message: string; devices?: any[]; templates?: any[]; templateCount?: number } | null>(null);
     const [waPushResult, setWaPushResult] = useState<{ total: number; sent: number; failed: number } | null>(null);
     const [greetingPhone, setGreetingPhone] = useState("");
     const [deletingGreeting, setDeletingGreeting] = useState(false);
