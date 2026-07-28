@@ -5,6 +5,10 @@ export interface IWaTemplate extends Document {
     message: string;
     templateType: 'greeting' | 'follow_up';
     isGreetingEnabled: boolean;
+    metaStatus?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
+    metaTemplateName?: string;
+    metaCategory?: string;
+    metaLanguage?: string;
     createdAt: Date;
 }
 
@@ -19,6 +23,14 @@ const waTemplateSchema = new Schema<IWaTemplate>(
             required: true,
         },
         isGreetingEnabled: { type: Boolean, default: false },
+        metaStatus: {
+            type: String,
+            enum: ['LOCAL', 'PENDING', 'APPROVED', 'REJECTED'],
+            default: 'LOCAL',
+        },
+        metaTemplateName: { type: String, trim: true },
+        metaCategory: { type: String, default: 'UTILITY' },
+        metaLanguage: { type: String, default: 'id' },
     },
     {
         timestamps: { createdAt: true, updatedAt: false },

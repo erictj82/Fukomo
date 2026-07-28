@@ -59,8 +59,8 @@ export async function GET(request: NextRequest, props: any) {
     }
 
     // [B09 FIX] Ambil fonnteToken dari settings agar WA bisa terkirim
-    const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigFromSettings(settings);
+    const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+    const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
     const voucher = await Voucher.findById(settings.birthdayVoucherId);
     if (!voucher || !voucher.isActive) {

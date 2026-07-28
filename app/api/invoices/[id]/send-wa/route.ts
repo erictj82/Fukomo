@@ -6,7 +6,7 @@ import { decryptFonnteToken } from "@/lib/encryption";
 import { normalizeIndonesianPhone } from "@/lib/phone";
 import { logActivity } from "@/lib/logger";
 import { getStoreIdBySlug } from "@/lib/subscriptionEnforcement";
-import { getWaProviderConfigFromSettings } from "@/lib/waProvider";
+import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } from "@/lib/waProvider";
 
 function formatCurrency(amount: number): string {
     return `Rp${(amount || 0).toLocaleString('id-ID')}`;
@@ -40,21 +40,7 @@ export async function POST(request: NextRequest, props: any) {
 
         const settings: any = await Settings.findOne({}).lean();
 
-        const isBalesOtomatis = settings?.waProvider === 'balesotomatis';
-        let waSendConfig: string | import('@/lib/waProvider').WaProviderConfig | undefined;
-
-        if (isBalesOtomatis) {
-            waSendConfig = getWaProviderConfigFromSettings(settings);
-        } else {
-            const fonnteToken = settings?.fonnteToken
-                ? decryptFonnteToken(String(settings.fonnteToken).trim())
-                : process.env.FONNTE_TOKEN;
-
-            if (!fonnteToken) {
-                return NextResponse.json({ success: false, error: 'Fonnte belum dikonfigurasi di Settings' }, { status: 500 });
-            }
-            waSendConfig = fonnteToken;
-        }
+        const waSendConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
         // Build items text
         const itemsText = (invoice.items || [])

@@ -221,9 +221,9 @@ export async function POST(request: NextRequest, props: any) {
     let walletAmountUsed = 0;
     if (normalizedBody.paymentMethods && normalizedBody.paymentMethods.length > 0) {
       walletAmountUsed = normalizedBody.paymentMethods
-        .filter((p: any) => p.method.toLowerCase() === 'wallet')
+        .filter((p: any) => p.method && (p.method.toLowerCase() === 'wallet' || p.method.toLowerCase() === 'e-wallet'))
         .reduce((sum: number, p: any) => sum + (parseFloat(p.amount) || 0), 0);
-    } else if (normalizedBody.paymentMethod && normalizedBody.paymentMethod.toLowerCase() === 'wallet') {
+    } else if (normalizedBody.paymentMethod && (normalizedBody.paymentMethod.toLowerCase() === 'wallet' || normalizedBody.paymentMethod.toLowerCase() === 'e-wallet')) {
       walletAmountUsed = normalizedBody.amountPaid || normalizedBody.totalAmount;
     }
 
@@ -449,8 +449,8 @@ export async function POST(request: NextRequest, props: any) {
                 `Batas minimum: ${updatedProduct.alertQuantity}\n\n` +
                 `Segera lakukan pemesanan stok.`;
 
-              const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigFromSettings(settings);
+              const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
               await sendWhatsApp(adminPhone, message, waConfig);
             }
           } catch (waError) {
@@ -519,8 +519,8 @@ export async function POST(request: NextRequest, props: any) {
                   `Stok saat ini: ${updatedProduct.stock}\n` +
                   `Batas minimum: ${updatedProduct.alertQuantity}\n\n` +
                   `Segera lakukan pemesanan stok.`;
-                const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigFromSettings(settings);
+                const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+                const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
                 await sendWhatsApp(adminPhone, message, waConfig);
               }
             } catch (waError) {

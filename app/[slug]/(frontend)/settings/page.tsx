@@ -74,6 +74,7 @@ interface Settings {
     waOwnerNumber: string;
     // WA Provider (lib/waProvider.ts)
     waProvider: "fonnte" | "balesotomatis";
+    waHybridMode: boolean;
     balesotomatisMode: "unofficial" | "waba";
     balesotomatisApiKey: string;
     balesotomatisNumberId: string;
@@ -194,6 +195,7 @@ export default function SettingsPage() {
         waAdminNumber: "",
         waOwnerNumber: "",
         waProvider: "balesotomatis",
+        waHybridMode: false,
         balesotomatisMode: "unofficial",
         balesotomatisApiKey: "",
         balesotomatisNumberId: "",
@@ -368,6 +370,7 @@ export default function SettingsPage() {
                     waAdminNumber: data.data.waAdminNumber || "",
                     waOwnerNumber: data.data.waOwnerNumber || "",
                     waProvider: data.data.waProvider || "fonnte",
+                    waHybridMode: data.data.waHybridMode ?? false,
                     balesotomatisMode: data.data.balesotomatisMode || "unofficial",
                     balesotomatisApiKey: data.data.balesotomatisApiKey || "",
                     balesotomatisNumberId: data.data.balesotomatisNumberId || "",
@@ -1384,33 +1387,109 @@ export default function SettingsPage() {
                         WhatsApp Provider
                     </h2>
                     <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Provider</label>
-                            <div className="grid grid-cols-2 gap-3">
-                                {(["fonnte", "balesotomatis"] as const).map((p) => (
-                                    <button
-                                        key={p}
-                                        type="button"
-                                        onClick={() => {
-                                            setSettings({ ...settings, waProvider: p });
-                                            setWaConnectionTestResult(null);
-                                        }}
-                                        className={`p-3 rounded-lg border-2 text-sm font-medium text-left transition ${
-                                            settings.waProvider === p
-                                                ? "border-green-500 bg-green-50 text-green-700"
-                                                : "border-gray-200 text-gray-600 hover:border-gray-300"
-                                        }`}
-                                    >
-                                        {p === "fonnte" ? "Fonnte (Legacy)" : "BalesOtomatis.id"}
-                                        <div className="text-xs font-normal text-gray-400 mt-0.5">
-                                            {p === "fonnte" ? "Token tunggal, gak disarankan buat tenant baru" : "Scan QR atau WABA resmi"}
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
+                        {/* Hybrid Mode Toggle */}
+                        <div className={`p-4 rounded-xl border-2 transition-all ${settings.waHybridMode ? 'border-emerald-400 bg-gradient-to-r from-emerald-50 to-green-50' : 'border-gray-200 bg-gray-50'}`}>
+                            <label className="flex items-start gap-3 cursor-pointer">
+                                <div className="relative inline-flex items-center mt-0.5">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.waHybridMode}
+                                        onChange={(e) => setSettings({ ...settings, waHybridMode: e.target.checked })}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                                </div>
+                                <div>
+                                    <div className="font-semibold text-sm text-gray-900 flex items-center gap-2">
+                                        🔀 Mode Hybrid (Hemat Biaya!)
+                                        {settings.waHybridMode && <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">AKTIF</span>}
+                                    </div>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Gunakan <strong>Fonnte</strong> untuk notifikasi harian (nota, reminder, follow-up) yang murah &amp; unlimited, 
+                                        dan <strong>BalesOtomatis WABA</strong> untuk campaign &amp; marketing blast yang resmi dari Meta.
+                                    </p>
+                                </div>
+                            </label>
                         </div>
 
-                        {settings.waProvider === "fonnte" ? (
+                        {settings.waHybridMode ? (
+                            /* === HYBRID MODE: Kedua provider aktif === */
+                            <div className="space-y-4">
+                                {/* Fonnte — Notifikasi */}
+                                <div className="p-4 bg-blue-50/50 border border-blue-200 rounded-xl space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-base">📱</span>
+                                        <h3 className="font-semibold text-sm text-blue-900">Fonnte — Untuk Notifikasi Harian</h3>
+                                        <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Nota • Reminder • Follow-up</span>
+                                    </div>
+                                    <FormInput
+                                        label="Fonnte API Token"
+                                        type="password"
+                                        value={settings.fonnteToken}
+                                        onChange={(e) => setSettings({ ...settings, fonnteToken: e.target.value })}
+                                        placeholder="Token dari fonnte.com"
+                                    />
+                                    <p className="text-xs text-blue-700">
+                                        Pesan via Fonnte lebih murah (flat/unlimited). Cocok untuk nota transaksi, reminder appointment, follow-up service, birthday voucher, stock alert, dll.
+                                    </p>
+                                </div>
+
+                                {/* BalesOtomatis WABA — Campaign */}
+                                <div className="p-4 bg-green-50/50 border border-green-200 rounded-xl space-y-3">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-base">📢</span>
+                                        <h3 className="font-semibold text-sm text-green-900">BalesOtomatis WABA — Untuk Campaign &amp; Blast</h3>
+                                        <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200">Marketing • Promo • Broadcast</span>
+                                    </div>
+                                    <FormInput
+                                        label="Secret Key"
+                                        type="password"
+                                        value={settings.balesotomatisSecretKey}
+                                        onChange={(e) => setSettings({ ...settings, balesotomatisSecretKey: e.target.value })}
+                                    />
+                                    <FormInput
+                                        label="Licenses Key"
+                                        value={settings.balesotomatisLicensesKey}
+                                        onChange={(e) => setSettings({ ...settings, balesotomatisLicensesKey: e.target.value })}
+                                        placeholder="WB-xxxx"
+                                    />
+                                    <p className="text-xs text-green-700">
+                                        Campaign &amp; blast pakai WhatsApp Business API resmi dari Meta — aman dari ban, bisa kirim ke ribuan kontak, dan mendukung template yang di-approve Meta.
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            /* === SINGLE PROVIDER MODE === */
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Provider</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {(["fonnte", "balesotomatis"] as const).map((p) => (
+                                            <button
+                                                key={p}
+                                                type="button"
+                                                onClick={() => {
+                                                    setSettings({ ...settings, waProvider: p });
+                                                    setWaConnectionTestResult(null);
+                                                }}
+                                                className={`p-3 rounded-lg border-2 text-sm font-medium text-left transition ${
+                                                    settings.waProvider === p
+                                                        ? "border-green-500 bg-green-50 text-green-700"
+                                                        : "border-gray-200 text-gray-600 hover:border-gray-300"
+                                                }`}
+                                            >
+                                                {p === "fonnte" ? "Fonnte (Legacy)" : "BalesOtomatis.id"}
+                                                <div className="text-xs font-normal text-gray-400 mt-0.5">
+                                                    {p === "fonnte" ? "Token tunggal, gak disarankan buat tenant baru" : "Scan QR atau WABA resmi"}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {settings.waHybridMode ? null : settings.waProvider === "fonnte" ? (
                             <div className="grid grid-cols-1 gap-4">
                                 <FormInput
                                     label="Fonnte API Token"

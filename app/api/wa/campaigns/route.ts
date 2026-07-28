@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { checkPermissionWithSession } from '@/lib/rbac';
 import { normalizeIndonesianPhone } from '@/lib/phone';
+import { getWaProviderConfigForPurpose } from '@/lib/waProvider';
 
 
 // GET: Fetch upcoming campaigns
@@ -36,13 +37,15 @@ export async function GET(request: NextRequest, props: any) {
 // POST: Create a new scheduled campaign
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-    const { Customer, WaCampaignQueue } = await getTenantModels(tenantSlug);
+    const { Customer, WaCampaignQueue, Settings } = await getTenantModels(tenantSlug);
 
     // [B14 FIX] Gunakan checkPermissionWithSession — 1 auth() call
     const { error: permError, session } = await checkPermissionWithSession(request, 'customers', 'edit');
     if (permError) return permError;
 
     try {
+        const settings = await Settings.findOne({}).lean();
+        const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
         const body = await request.json();
         const { customerIds, message, campaignName, scheduledAt, filters } = body;
 

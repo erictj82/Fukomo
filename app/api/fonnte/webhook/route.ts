@@ -60,8 +60,8 @@ const getGreetingMessage = async (models: any): Promise<{ message: string, waCon
         return null; // Greeting di-disable dari Settings — early exit
     }
 
-    const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-    const waConfig = getWaProviderConfigFromSettings(settings);
+    const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+    const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
     const activeGreetingTemplate = await WaTemplate.findOne({
         isGreetingEnabled: true,
@@ -99,8 +99,8 @@ export async function POST(request: NextRequest, props: any) {
         // SEC-02 FIX: Verifikasi Signature Webhook Fonnte
         const { Settings } = models;
         const settings = await Settings.findOne().select('fonnteToken waProvider balesotomatisMode balesotomatisApiKey balesotomatisNumberId balesotomatisSecretKey balesotomatisLicensesKey storeName').lean() as any;
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-        const expectedWaConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const expectedWaConfig = getWaProviderConfigForPurpose(settings, 'notification');
         
         const authHeader = request.headers.get('authorization');
         

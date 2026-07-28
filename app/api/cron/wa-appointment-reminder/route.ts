@@ -21,8 +21,8 @@ export async function POST(request: NextRequest) {
         }
 
         const minutesBefore = settings.waAppointmentReminderMinutesBefore || 60;
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-        const waConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
         if (!waConfig || (waConfig.provider === 'fonnte' && !waConfig.fonnteToken)) {
             return NextResponse.json({ error: 'WA Provider not configured' }, { status: 500 });

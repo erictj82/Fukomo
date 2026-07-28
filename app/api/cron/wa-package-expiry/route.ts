@@ -54,8 +54,8 @@ export async function GET(request: NextRequest, props: any) {
 
         const reminderDays = settings?.packageExpiryReminderDays || 30;
         const storeName = settings?.storeName || 'Salon';
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
         const now = new Date();
         const futureDate = new Date();

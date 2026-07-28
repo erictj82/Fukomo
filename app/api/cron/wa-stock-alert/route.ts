@@ -50,8 +50,8 @@ export async function GET(request: NextRequest, props: any) {
         // === END CHECK ===
 
         const adminPhone = settings?.waAdminNumber;
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
         if (!adminPhone) {
             return NextResponse.json({

@@ -2,6 +2,7 @@ import { decryptFonnteToken } from '@/lib/encryption';
 import { getMasterModels } from './masterDb';
 import { getTenantModels } from './tenantDb';
 import { sendWhatsApp } from '@/lib/fonnte';
+import { getWaProviderConfigForPurpose } from '@/lib/waProvider';
 import { addMessageVariation } from '@/lib/messageVariation';
 import { validateMessageContent } from '@/lib/messageValidator';
 // cronDedup removed — atomic lock via lastRunDate is sufficient
@@ -71,7 +72,7 @@ export async function processPendingCampaigns(now: Date = new Date()) {
             const { WaCampaignQueue, WaBlastLog, Customer, Settings } = models;
             // Load settings for operational hours and daily limits
             const settings: any = await Settings.findOne() || {};
-            const token = settings.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : String(process.env.FONNTE_TOKEN || '').trim();
+            const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
             const opStart = settings.waOperationalHoursStart ?? 8;
             const opEnd = settings.waOperationalHoursEnd ?? 20;
 
@@ -262,7 +263,7 @@ export async function processPendingCampaigns(now: Date = new Date()) {
                 }
 
                 try {
-                    const result = await sendWhatsApp(target.phone, personalizedMsg, token);
+                    const result = await sendWhatsApp(target.phone, personalizedMsg, waConfig);
                     if (result.success) {
                         target.status = 'sent';
                         consecutiveErrors = 0; // reset
@@ -356,7 +357,7 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
             // Rules have their own `scheduleTime` that need to execute regardless of WA Blast operational boundaries
             
 
-            const token = settings.fonnteToken ? decryptFonnteToken(String(settings.fonnteToken).trim()) : String(process.env.FONNTE_TOKEN || '').trim();
+            const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
             for (const rule of activeRules) {
                 // Check if rule already ran today (in memory first)
@@ -472,7 +473,7 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
 
                         let allSuccess = true;
                         for (const phone of targetPhones) {
-                            const result = await sendWhatsApp(phone, message, token);
+                            const result = await sendWhatsApp(phone, message, waConfig);
                             if (!result.success) {
                                 console.error(`[AUTOMATION:daily_report] Gagal kirim ke ${phone}: ${result.error}`);
                                 allSuccess = false;
@@ -508,7 +509,7 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
 
                         let sent = false;
                         for (const phone of targetPhones) {
-                            const result = await sendWhatsApp(phone, message, token);
+                            const result = await sendWhatsApp(phone, message, waConfig);
                             if (result.success) sent = true;
                             else console.error(`[AUTOMATION:stock_alert] Gagal kirim ke ${phone}: ${result.error}`);
                             await new Promise(r => setTimeout(r, 10000));
@@ -550,7 +551,7 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
                                 .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
                                 .replace(/{{daysLeft}}/gi, String(daysBefore))
                                 .replace(/{{expiryDate}}/gi, customer.membershipExpiry ? new Date(customer.membershipExpiry).toLocaleDateString('id-ID') : '');
-                            const result = await sendWhatsApp(customer.phone, msg, token);
+                            const result = await sendWhatsApp(customer.phone, msg, waConfig);
                             if (result.success) {
                                 memberSentCount++;
                             } else {
@@ -597,7 +598,7 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
                                 .replace(/{{daysLeft}}/gi, String(daysBefore))
                                 .replace(/{{expiryDate}}/gi, pkg.expiresAt ? new Date(pkg.expiresAt).toLocaleDateString('id-ID') : '')
                                 .replace(/{{remainingQuota}}/gi, String(pkg.remainingCount || 0));
-                            const result = await sendWhatsApp(customer.phone, msg, token);
+                            const result = await sendWhatsApp(customer.phone, msg, waConfig);
                             if (result.success) {
                                 pkgSentCount++;
                             } else {
@@ -634,7 +635,7 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
                             const msg = rule.messageTemplate
                                 .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
                                 .replace(/{{storeName}}/gi, settings.storeName || 'Salon');
-                            const result = await sendWhatsApp(customer.phone, msg, token);
+                            const result = await sendWhatsApp(customer.phone, msg, waConfig);
                             if (result.success) {
                                 bdaySentCount++;
                             } else {
@@ -679,7 +680,8 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
         try {
             const models = await getTenantModels(slug);
             const { WaSchedule } = models;
-            const token = await getTenantFonnteToken(slug);
+            const followUpSettings: any = await models.Settings.findOne() || {};
+            const followUpConfig = getWaProviderConfigForPurpose(followUpSettings, 'notification');
 
             const pendingSchedules = await WaSchedule.find({
                 scheduledAt: { $lte: now },
@@ -725,7 +727,7 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
                         nama_service: selectedServiceName || (serviceNames.length > 0 ? serviceNames.join(', ') : 'Layanan'),
                     });
 
-                    const result = await sendWhatsApp(schedule.phoneNumber, message, token);
+                    const result = await sendWhatsApp(schedule.phoneNumber, message, followUpConfig);
 
                     if (result.success) {
                         await WaSchedule.findByIdAndUpdate(schedule._id, {

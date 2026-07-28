@@ -55,8 +55,8 @@ export async function GET(request: NextRequest, props: any) {
 
         const ownerPhone = settings?.waOwnerNumber;
         const storeName = settings?.storeName || 'Salon';
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
 
 

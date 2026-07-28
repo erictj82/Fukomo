@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 // Fetches customer data by publicToken for the customer portal page
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-    const { Customer, Invoice, CustomerPackage, Settings } = await getTenantModels(tenantSlug);
+    const { Customer, Invoice, CustomerPackage, Settings, WalletTransaction } = await getTenantModels(tenantSlug);
 
     try {
         const { token } = await props.params;
@@ -45,12 +45,22 @@ export async function GET(request: NextRequest, props: any) {
             .select('packageName expiresAt serviceQuotas')
             .lean();
 
+        // Fetch wallet transactions (last 20)
+        const walletTransactions = await WalletTransaction.find({
+            customer: customer._id
+        })
+            .select('type amount balanceAfter description createdAt')
+            .sort({ createdAt: -1 })
+            .limit(20)
+            .lean();
+
         return NextResponse.json({
             success: true,
             data: {
                 customer,
                 invoices,
                 activePackages,
+                walletTransactions,
                 settings: {
                     storeName: settings?.storeName || 'Salon'
                 }

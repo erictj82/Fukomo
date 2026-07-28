@@ -73,6 +73,7 @@ interface Service {
 interface WaTemplate {
   _id: string;
   name: string;
+  metaStatus?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
 }
 
 interface ServiceBundleItem {
@@ -1756,7 +1757,7 @@ export default function ServicesPage() {
                     placeholder="Select template"
                     options={waTemplates.map((template) => ({
                       value: template._id,
-                      label: template.name,
+                      label: template.metaStatus === 'APPROVED' ? `🟢 ${template.name} [Meta Approved]` : template.metaStatus === 'PENDING' ? `🟡 ${template.name} [Pending Review]` : template.name,
                     }))}
                   />
                 </div>
@@ -1810,7 +1811,7 @@ export default function ServicesPage() {
                     placeholder="Optional template"
                     options={waTemplates.map((template) => ({
                       value: template._id,
-                      label: template.name,
+                      label: template.metaStatus === 'APPROVED' ? `🟢 ${template.name} [Meta Approved]` : template.metaStatus === 'PENDING' ? `🟡 ${template.name} [Pending Review]` : template.name,
                     }))}
                   />
                 </div>

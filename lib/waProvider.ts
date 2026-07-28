@@ -165,6 +165,52 @@ export async function testBalesOtomatisWaba(
     }
 }
 
+export async function createBalesOtomatisTemplate(
+    secretKey: string,
+    licensesKey: string,
+    templateName: string,
+    message: string,
+    category: string = 'UTILITY',
+    language: string = 'id'
+): Promise<{ success: boolean; data?: any; error?: string }> {
+    if (!secretKey || !licensesKey) return { success: false, error: 'Kredensial WABA kosong.' };
+    try {
+        const cleanName = templateName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const payload = {
+            secret_key: secretKey,
+            licenses_key: licensesKey,
+            template_name: cleanName,
+            language: language,
+            category: category,
+            components: [
+                {
+                    type: "BODY",
+                    text: message
+                }
+            ]
+        };
+        const data = await postJson('/create_template', payload);
+        if (data?.code !== '200' && data?.code !== 200 && !data?.success && data?.status !== true) {
+            const altData = await postJson('/add_template', payload);
+            if (altData?.code !== '200' && altData?.code !== 200 && !altData?.success && altData?.status !== true) {
+                const altData2 = await postJson('/create-template', payload);
+                if (altData2?.code !== '200' && altData2?.code !== 200 && !altData2?.success && altData2?.status !== true) {
+                    return { 
+                        success: false, 
+                        error: typeof data?.message === 'string' ? data.message : (typeof altData?.message === 'string' ? altData.message : 'Gagal mendaftarkan template ke server WABA Meta. Pastikan format nama huruf kecil tanpa spasi.') 
+                    };
+                }
+                return { success: true, data: altData2 };
+            }
+            return { success: true, data: altData };
+        }
+        return { success: true, data };
+    } catch (error: any) {
+        return { success: false, error: error?.message || 'Gagal menghubungi server WABA Meta' };
+    }
+}
+
+
 export async function sendTemplateViaBalesOtomatis(
     cfg: BalesOtomatisWabaConfig,
     phone: string,
@@ -250,4 +296,53 @@ export function getWaProviderConfigFromSettings(settings: any): WaProviderConfig
     }
     
     return { provider: 'fonnte', fonnteToken: '' };
+}
+
+/**
+ * Tujuan pengiriman pesan WA — menentukan provider mana yang dipakai di mode hybrid.
+ * - 'notification' → notifikasi individual (nota, reminder, follow-up, birthday, stok alert, dll)
+ * - 'campaign'     → marketing blast / broadcast massal
+ */
+export type WaSendPurpose = 'notification' | 'campaign';
+
+/**
+ * Smart Router: pilih provider berdasarkan tujuan pengiriman.
+ * 
+ * Kalau waHybridMode AKTIF:
+ *   - notification → selalu pakai FONNTE (murah, flat/unlimited)
+ *   - campaign     → selalu pakai BALESOTOMATIS WABA (resmi Meta, aman dari ban)
+ * 
+ * Kalau waHybridMode MATI (default):
+ *   - return provider tunggal yang dipilih di settings (backward compatible)
+ */
+export function getWaProviderConfigForPurpose(settings: any, purpose: WaSendPurpose): WaProviderConfig {
+    // Mode hybrid aktif — routing berdasarkan tujuan
+    if (settings?.waHybridMode === true) {
+        const { decryptFonnteToken } = require('@/lib/encryption');
+
+        if (purpose === 'notification') {
+            // Notifikasi → Fonnte (murah, unlimited)
+            const token = settings?.fonnteToken 
+                ? decryptFonnteToken(String(settings.fonnteToken).trim()) 
+                : '';
+            return { provider: 'fonnte', fonnteToken: token };
+        }
+
+        // Campaign → BalesOtomatis WABA (resmi Meta)
+        return {
+            provider: 'balesotomatis',
+            balesotomatis: {
+                mode: 'waba' as const,
+                secretKey: settings?.balesotomatisSecretKey 
+                    ? decryptFonnteToken(String(settings.balesotomatisSecretKey).trim()) 
+                    : '',
+                licensesKey: settings?.balesotomatisLicensesKey 
+                    ? decryptFonnteToken(String(settings.balesotomatisLicensesKey).trim()) 
+                    : '',
+            },
+        };
+    }
+
+    // Mode single-provider (default, backward compatible)
+    return getWaProviderConfigFromSettings(settings);
 }

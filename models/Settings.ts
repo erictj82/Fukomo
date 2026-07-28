@@ -135,6 +135,12 @@ const SettingsSchema = new mongoose.Schema({
         enum: ['fonnte', 'balesotomatis'],
         default: 'balesotomatis',
     },
+    // Mode Hybrid: Fonnte untuk notifikasi harian (nota, reminder, follow-up), 
+    // BalesOtomatis WABA untuk campaign & marketing blast. Hemat biaya!
+    waHybridMode: {
+        type: Boolean,
+        default: false,
+    },
     // BalesOtomatis.id punya 2 mode koneksi yang auth & endpoint-nya BEDA (lihat lib/waProvider.ts):
     // 'unofficial' = scan QR (apiKey + numberId), 'waba' = WhatsApp Business API resmi (secretKey + licensesKey)
     balesotomatisMode: {

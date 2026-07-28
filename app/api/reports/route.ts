@@ -113,7 +113,7 @@ export async function GET(request: NextRequest, props: any) {
                 // Staff Performance: Account for multi-staff assignments
                 const staffInvoices = await Invoice.find({
                     date: { $gte: start, $lte: end },
-                    status: { $nin: ['cancelled', 'voided'] }
+                    status: { $in: ['paid', 'partially_paid'] }
                 })
                     .populate('staff staffAssignments.staff items.staffAssignments.staff items.sellingBy')
                     .populate({ path: 'appointment', populate: { path: 'staff' } })

@@ -28,8 +28,8 @@ export async function POST(request: NextRequest, props: any) {
 
         const { Settings } = await getTenantModels(tenantSlug);
         const settings: any = await Settings.findOne({});
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-        const waConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
         const emailEnabled = await isEmailConfigured();
         const smsEnabled = await isSMSConfigured();
@@ -201,8 +201,8 @@ export async function GET(request: NextRequest, props: any) {
         if (permissionError) return permissionError;
 
         const settings = await Settings.findOne({}).lean() as any;
-        const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-        const waConfig = getWaProviderConfigFromSettings(settings);
+        const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+        const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
         const { searchParams } = new URL(request.url);
         const daysBefore = parseInt(searchParams.get("daysBefore") || "1");

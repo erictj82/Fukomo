@@ -98,7 +98,7 @@ export async function PUT(request: NextRequest, props: any) {
                         { "staffAssignments.staff": staffId }
                     ],
                     date: { $gte: startDate, $lte: endDate },
-                    status: { $in: ["paid", "partially_paid", "pending"] }
+                    status: { $in: ["paid", "partially_paid"] }
                 })).map((inv: any) => {
                     let specificCommission = 0;
                     let specificTip = 0;

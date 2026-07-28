@@ -180,7 +180,7 @@ export async function POST(request: NextRequest, props: any) {
                     { "items.sellingBy": staffId }
                 ],
                 date: { $gte: startDate, $lte: endDate },
-                status: { $in: ["paid", "partially_paid", "pending"] }
+                status: { $in: ["paid", "partially_paid"] }
             })).map((inv: any) => {
                 let specificCommission = 0;
                 let specificTip = 0;

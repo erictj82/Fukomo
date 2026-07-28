@@ -2447,6 +2447,7 @@ export default function POSPage() {
                   customer: customerId,
                   amount: entryAmount,
                   paymentMethod: entry.method,
+                  skipWalletDeduction: true,
                   notes:
                     depositEntries.length > 1
                       ? `Split payment (${entry.method}) dari POS`
@@ -2464,6 +2465,7 @@ export default function POSPage() {
                 customer: customerId,
                 amount: paid,
                 paymentMethod,
+                skipWalletDeduction: true,
                 notes: "Initial payment from POS",
               }),
             });
@@ -3131,6 +3133,29 @@ export default function POSPage() {
                   </button>
                 </div>
               )}
+
+            {selectedCustomer && selectedCustomer !== "walking-customer" && (
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 shadow-sm">
+                  <div className="flex items-center gap-1.5">
+                    <Wallet className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                    <span className="text-[11px] text-emerald-900 font-semibold">Saldo Wallet</span>
+                  </div>
+                  <span className="text-[12px] font-black text-emerald-700">
+                    {settings.symbol}{(customerWalletBalance || 0).toLocaleString("id-ID", { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 shadow-sm">
+                  <div className="flex items-center gap-1.5">
+                    <Award className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                    <span className="text-[11px] text-blue-900 font-semibold">Loyalty Poin</span>
+                  </div>
+                  <span className="text-[12px] font-black text-blue-700">
+                    {(customerLoyaltyPoints || 0).toLocaleString("id-ID")} Pts
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Referral Code */}
             {selectedCustomer && selectedCustomer !== "walking-customer" && isFirstTimer && !customers.find((c) => c._id === selectedCustomer)?.referredBy && (

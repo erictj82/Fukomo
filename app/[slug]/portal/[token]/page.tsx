@@ -71,7 +71,7 @@ export default function CustomerPortalPage() {
         );
     }
 
-    const { customer, invoices, activePackages, settings } = data;
+    const { customer, invoices, activePackages, settings, walletTransactions } = data;
 
     const formatRupiah = (amount: number) => {
         return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
@@ -109,28 +109,19 @@ export default function CustomerPortalPage() {
                         <p className="text-gray-500 font-medium text-sm flex items-center justify-center md:justify-start gap-1">
                             <Phone className="w-4 h-4" /> {customer.customerNumber ? `ID: ${customer.customerNumber}` : 'Customer'}
                         </p>
-                        
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center">
-                                <Wallet className="w-6 h-6 text-blue-600 mx-auto mb-2" />
-                                <div className="text-xs text-blue-800 font-semibold mb-1">Saldo Wallet</div>
-                                <div className="font-bold text-gray-900 text-sm">{formatRupiah(customer.walletBalance || 0)}</div>
-                            </div>
-                            <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100 text-center">
-                                <Award className="w-6 h-6 text-yellow-600 mx-auto mb-2" />
-                                <div className="text-xs text-yellow-800 font-semibold mb-1">Loyalty Points</div>
-                                <div className="font-bold text-gray-900 text-sm">{customer.loyaltyPoints || 0} Pts</div>
-                            </div>
-                            <div className="bg-purple-50 p-4 rounded-xl border border-purple-100 text-center">
-                                <div className="w-6 h-6 rounded-full bg-purple-200 text-purple-700 flex items-center justify-center font-black mx-auto mb-2 text-xs">Tier</div>
-                                <div className="text-xs text-purple-800 font-semibold mb-1">Membership</div>
-                                <div className="font-bold text-gray-900 text-sm capitalize">{customer.membershipTier || 'Regular'}</div>
-                            </div>
-                            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 text-center">
-                                <Calendar className="w-6 h-6 text-emerald-600 mx-auto mb-2" />
-                                <div className="text-xs text-emerald-800 font-semibold mb-1">Exp. Member</div>
-                                <div className="font-bold text-gray-900 text-sm">{formatDate(customer.membershipExpiry)}</div>
-                            </div>
+                    </div>
+                    <div className="flex gap-4 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6 w-full md:w-auto justify-around">
+                        <div className="text-center">
+                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Loyalty Poin</span>
+                            <span className="text-2xl font-extrabold text-blue-600 flex items-center justify-center gap-1">
+                                <Award className="w-5 h-5 text-amber-500 inline" /> {customer.loyaltyPoints || 0}
+                            </span>
+                        </div>
+                        <div className="text-center">
+                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Saldo Wallet</span>
+                            <span className="text-2xl font-extrabold text-emerald-600 flex items-center justify-center gap-1">
+                                <Wallet className="w-5 h-5 text-emerald-500 inline" /> {formatRupiah(customer.walletBalance || 0)}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -147,25 +138,24 @@ export default function CustomerPortalPage() {
                             <div className="divide-y divide-gray-100">
                                 {invoices && invoices.length > 0 ? (
                                     invoices.map((inv: any) => (
-                                        <div key={inv._id} className="p-5 hover:bg-gray-50 transition-colors">
-                                            <div className="flex justify-between items-start mb-2">
-                                                <div>
-                                                    <span className="text-xs font-bold text-gray-500 uppercase">{formatDate(inv.date)}</span>
-                                                    <h4 className="font-semibold text-gray-900 mt-1">{inv.invoiceNumber}</h4>
-                                                </div>
-                                                <div className="text-right">
-                                                    <div className="font-bold text-blue-700">{formatRupiah(inv.totalAmount)}</div>
-                                                    <span className={`inline-block mt-1 text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${
-                                                        inv.status === 'paid' ? 'bg-green-50 text-green-700 border-green-200' : 
-                                                        inv.status === 'partially_paid' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                                                        'bg-gray-100 text-gray-600 border-gray-200'
+                                        <div key={inv._id} className="p-5 hover:bg-gray-50 transition-colors flex justify-between items-center">
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="font-bold text-gray-900">{inv.invoiceNumber}</span>
+                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                                                        inv.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 
+                                                        inv.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-700'
                                                     }`}>
-                                                        {inv.status?.replace('_', ' ')}
+                                                        {inv.status}
                                                     </span>
                                                 </div>
+                                                <p className="text-xs text-gray-500">{formatDate(inv.date)}</p>
+                                                <p className="text-sm font-medium text-gray-700 mt-2">
+                                                    {inv.items?.map((i: any) => i.name).join(", ")}
+                                                </p>
                                             </div>
-                                            <div className="text-sm text-gray-600">
-                                                {inv.items?.map((item: any) => item.name).join(', ')}
+                                            <div className="text-right font-bold text-gray-900">
+                                                {formatRupiah(inv.totalAmount)}
                                             </div>
                                         </div>
                                     ))
@@ -173,6 +163,42 @@ export default function CustomerPortalPage() {
                                     <div className="p-8 text-center text-gray-500">
                                         <FileText className="w-10 h-10 mx-auto text-gray-300 mb-2" />
                                         <p>Belum ada riwayat transaksi.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Riwayat Saldo Wallet */}
+                        <div className="bg-white rounded-2xl shadow-md border border-gray-100 overflow-hidden">
+                            <div className="p-5 border-b border-gray-100 bg-gray-50 flex items-center gap-3">
+                                <Wallet className="w-5 h-5 text-emerald-600" />
+                                <h3 className="font-bold text-lg text-gray-900">Riwayat Saldo Wallet</h3>
+                            </div>
+                            <div className="divide-y divide-gray-100">
+                                {walletTransactions && walletTransactions.length > 0 ? (
+                                    walletTransactions.map((wt: any, idx: number) => {
+                                        const isCredit = wt.type === 'topup' || wt.type === 'bonus' || wt.type === 'refund' || (wt.amount > 0 && wt.type !== 'payment');
+                                        return (
+                                            <div key={wt._id || idx} className="p-5 hover:bg-gray-50 transition-colors flex justify-between items-center">
+                                                <div>
+                                                    <span className="text-xs font-bold text-gray-400 uppercase">{formatDate(wt.createdAt)}</span>
+                                                    <h4 className="font-semibold text-gray-900 mt-1 capitalize">{wt.description || (wt.type === 'topup' ? 'Top-Up Saldo' : wt.type === 'payment' ? 'Pembayaran Transaksi' : wt.type)}</h4>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className={`font-bold ${isCredit ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                        {isCredit ? '+' : '-'}{formatRupiah(Math.abs(wt.amount || 0))}
+                                                    </div>
+                                                    <div className="text-xs text-gray-400 mt-0.5">
+                                                        Sisa: {formatRupiah(wt.balanceAfter || 0)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                ) : (
+                                    <div className="p-8 text-center text-gray-500">
+                                        <Wallet className="w-10 h-10 mx-auto text-gray-300 mb-2" />
+                                        <p>Belum ada riwayat saldo wallet.</p>
                                     </div>
                                 )}
                             </div>

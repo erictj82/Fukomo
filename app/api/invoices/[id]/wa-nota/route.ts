@@ -25,8 +25,8 @@ async function compileWaNotaData(id: string, tenantSlug: string, request: Reques
     return { success: false, error: 'Settings not found', status: 400 };
   }
 
-  const { getWaProviderConfigFromSettings } = require('@/lib/waProvider');
-  const waConfig = getWaProviderConfigFromSettings(settings);
+  const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+  const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
 
   const formatRupiah = (num: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: settings.currency || 'IDR' }).format(num || 0);
 

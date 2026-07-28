@@ -13,6 +13,8 @@ interface WaTemplate {
     message: string;
     templateType?: 'greeting' | 'follow_up';
     isGreetingEnabled?: boolean;
+    metaStatus?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
+    metaTemplateName?: string;
     createdAt: string;
 }
 
@@ -36,6 +38,7 @@ export default function WaTemplatesPage() {
     const [wabaLoading, setWabaLoading] = useState(false);
     const [wabaError, setWabaError] = useState<string | null>(null);
     const [isWabaMode, setIsWabaMode] = useState(false);
+    const [submittingMetaId, setSubmittingMetaId] = useState<string | null>(null);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<WaTemplate | null>(null);
@@ -46,6 +49,7 @@ export default function WaTemplatesPage() {
         message: "",
         templateType: "follow_up",
         isGreetingEnabled: false,
+        submitToMeta: true,
     });
 
     const previewMessage = useMemo(() => renderPreview(formData.message), [formData.message]);
@@ -111,6 +115,7 @@ export default function WaTemplatesPage() {
                 message: template.message,
                 templateType: template.templateType || (template.isGreetingEnabled ? 'greeting' : 'follow_up'),
                 isGreetingEnabled: Boolean(template.isGreetingEnabled),
+                submitToMeta: isWabaMode && template.metaStatus !== 'APPROVED',
             });
         } else {
             setEditingTemplate(null);
@@ -119,6 +124,7 @@ export default function WaTemplatesPage() {
                 message: "Halo {{nama_customer}}, terima kasih sudah menggunakan layanan {{nama_service}} di salon kami.",
                 templateType: "follow_up",
                 isGreetingEnabled: false,
+                submitToMeta: isWabaMode,
             });
         }
 
@@ -128,6 +134,29 @@ export default function WaTemplatesPage() {
     const closeModal = () => {
         setIsModalOpen(false);
         setEditingTemplate(null);
+    };
+
+    const handleSubmitToMeta = async (t: WaTemplate) => {
+        if (!confirm(`Apakah Anda yakin ingin mengajukan template "${t.name}" ke server Meta (WhatsApp Business API)?`)) return;
+        setSubmittingMetaId(t._id);
+        try {
+            const res = await fetch(`/api/wa/templates/${t._id}/submit-meta`, {
+                method: "POST",
+                headers: { "x-store-slug": slug },
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert("✅ " + data.message);
+                fetchTemplates();
+                fetchWabaTemplates();
+            } else {
+                alert("❌ Gagal: " + (data.error || "Gagal mengajukan ke Meta"));
+            }
+        } catch (e: any) {
+            alert("❌ Terjadi kesalahan: " + e.message);
+        } finally {
+            setSubmittingMetaId(null);
+        }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -356,6 +385,25 @@ export default function WaTemplatesPage() {
                                                 Greeting Active
                                             </span>
                                         )}
+                                        {isWabaMode && (
+                                            template.metaStatus === 'APPROVED' ? (
+                                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-sm flex items-center gap-1">
+                                                    🟢 Approved Meta (Siap Jalan!)
+                                                </span>
+                                            ) : template.metaStatus === 'PENDING' ? (
+                                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 shadow-sm flex items-center gap-1">
+                                                    🟡 Menunggu Review Meta
+                                                </span>
+                                            ) : template.metaStatus === 'REJECTED' ? (
+                                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 shadow-sm flex items-center gap-1">
+                                                    🔴 Ditolak Meta
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-300 flex items-center gap-1">
+                                                    ⚪ Belum ke Meta
+                                                </span>
+                                            )
+                                        )}
                                     </div>
                                     <p className="text-sm text-gray-600 whitespace-pre-wrap">{template.message}</p>
                                     <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-2">
@@ -363,7 +411,20 @@ export default function WaTemplatesPage() {
                                         {renderPreview(template.message)}
                                     </div>
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 flex-wrap items-center">
+                                    {isWabaMode && template.metaStatus !== 'APPROVED' && (
+                                        <PermissionGate resource="waTemplates" action="edit">
+                                            <button
+                                                type="button"
+                                                disabled={submittingMetaId === template._id}
+                                                onClick={() => handleSubmitToMeta(template)}
+                                                className="px-3 py-2 border border-emerald-400 bg-emerald-50 rounded-lg text-sm font-semibold text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 shadow-sm transition-all disabled:opacity-50"
+                                                title="Ajukan persetujuan template ini ke server Meta agar bisa dikirim di luar batas 24 jam"
+                                            >
+                                                <span>🚀</span> {submittingMetaId === template._id ? "Mengajukan..." : "Ajukan ke Meta"}
+                                            </button>
+                                        </PermissionGate>
+                                    )}
                                     {(template.templateType === 'greeting' || (!template.templateType && template.isGreetingEnabled)) && (
                                         <PermissionGate resource="waTemplates" action="edit">
                                             <button
@@ -439,6 +500,24 @@ export default function WaTemplatesPage() {
                             />
                             Gunakan template ini sebagai auto greeting (ON)
                         </label>
+                    )}
+                    {isWabaMode && (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg mb-4">
+                            <label className="flex items-start gap-2 text-sm font-medium text-emerald-900 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={formData.submitToMeta}
+                                    onChange={(e) => setFormData({ ...formData, submitToMeta: e.target.checked })}
+                                    className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500"
+                                />
+                                <div>
+                                    <span>☑️ Langsung sambungkan & ajukan persetujuan ke server Meta (WABA)</span>
+                                    <p className="text-xs font-normal text-emerald-700 mt-0.5">
+                                        Saat dicentang, sistem akan mendaftarkan template ini ke server Meta. Setelah diajukan, status akan menjadi 🟡 Pending Review hingga disetujui (🟢 Approved).
+                                    </p>
+                                </div>
+                            </label>
+                        </div>
                     )}
                     <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
                         <div className="font-semibold text-gray-700 mb-1">Preview dengan data contoh:</div>

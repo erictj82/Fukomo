@@ -11,6 +11,7 @@ import { normalizeIndonesianPhone } from '@/lib/phone';
 import { validateWhatsAppNumber } from '@/lib/fonnte';
 import { decryptFonnteToken } from '@/lib/encryption';
 import { validateMessageContent } from '@/lib/messageValidator';
+import { getWaProviderConfigForPurpose } from '@/lib/waProvider';
 
 /* ------------------------------------------------------------------ */
 /*  GET — Filter customers for blast preview                           */
@@ -125,6 +126,9 @@ export async function POST(request: NextRequest, props: any) {
     // [B14 FIX] Gunakan checkPermissionWithSession — 1 auth() call
     const { error: permError, session } = await checkPermissionWithSession(request, 'customers', 'edit');
     if (permError) return permError;
+
+    const settings = await Settings.findOne({}).lean();
+    const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
 
     const body = await request.json();
     const { customerIds, message, campaignName, filters } = body;

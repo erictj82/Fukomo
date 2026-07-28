@@ -48,7 +48,7 @@ export async function POST(request: NextRequest, props: any) {
             return NextResponse.json({ success: false, error: "Nominal deposit harus lebih dari 0." }, { status: 400 });
         }
 
-        const isWallet = body.paymentMethod && body.paymentMethod.toLowerCase() === 'wallet';
+        const isWallet = body.paymentMethod && (body.paymentMethod.toLowerCase() === 'wallet' || body.paymentMethod.toLowerCase() === 'e-wallet') && !body.skipWalletDeduction;
         const Customer = (await getTenantModels(tenantSlug)).Customer;
 
         if (isWallet) {
