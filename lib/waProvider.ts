@@ -182,6 +182,8 @@ export async function createBalesOtomatisTemplate(
         const payload = {
             secret_key: secretKey,
             licenses_key: licensesKey,
+            secretKey: secretKey,
+            licensesKey: licensesKey,
             template_name: cleanName,
             language: language,
             category: category,
