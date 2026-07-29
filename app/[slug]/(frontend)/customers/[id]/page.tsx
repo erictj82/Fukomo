@@ -228,7 +228,7 @@ export default function CustomerDashboardPage() {
   const [editingPackage, setEditingPackage] = useState<CustomerPackageItem | null>(null);
   const [packageEditForm, setPackageEditForm] = useState({
     expiresAt: "",
-    serviceQuotas: [] as { _id: string, serviceName: string, remainingQuota: number }[]
+    serviceQuotas: [] as { _id: string, service: string, serviceName: string, remainingQuota: number }[]
   });
   const [savingPackage, setSavingPackage] = useState(false);
 

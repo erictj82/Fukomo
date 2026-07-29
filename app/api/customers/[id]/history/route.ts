@@ -81,51 +81,72 @@ export async function GET(request: NextRequest, props: any) {
 
     const [invoices, packageOrders, packageUsage] = await Promise.all([
       Invoice.find({ customer: id })
-        .select('invoiceNumber date totalAmount amountPaid status paymentMethod sourceType createdAt items')
+        .select('invoiceNumber date totalAmount amountPaid status paymentMethod sourceType createdAt items notes')
         .sort({ createdAt: -1 })
         .limit(30)
         .lean<InvoiceHistoryItem[]>(),
       PackageOrder.find({ customer: id })
-        .select('amount totalAmount orderNumber status paymentMethod paidAt createdAt packageSnapshot invoice')
+        .select('amount orderNumber status paymentMethod paidAt createdAt packageSnapshot')
         .sort({ createdAt: -1 })
         .limit(30)
         .lean<any[]>(),
       PackageUsageLedger.find({ customer: id })
-        .populate('invoice', 'invoiceNumber date')
         .select('serviceName quantity usedAt sourceType note invoice createdAt')
         .sort({ usedAt: -1 })
         .limit(50)
         .lean<any[]>(),
     ]);
 
-    const enrichedPackageOrders = await Promise.all(packageOrders.map(async (po: any) => {
+    // ── Enrich Package Orders with invoice numbers ──
+    // Strategy: Bulk-fetch all package_purchase invoices for this customer,
+    // then match each PackageOrder by its orderNumber appearing in invoice.notes
+    const packagePurchaseInvoices = await Invoice.find({
+      customer: id,
+      sourceType: 'package_purchase',
+      status: { $nin: ['cancelled', 'voided'] },
+    }).select('invoiceNumber notes').lean<any[]>();
+
+    const enrichedPackageOrders = packageOrders.map((po: any) => {
       let invNum: string | null = null;
-      if (po.invoice) {
-        if (typeof po.invoice === 'object' && po.invoice.invoiceNumber) {
-          invNum = po.invoice.invoiceNumber;
-        } else {
-          const inv = await Invoice.findById(po.invoice).select('invoiceNumber').lean();
-          invNum = (inv as any)?.invoiceNumber;
-        }
+
+      // Match by orderNumber in invoice notes
+      if (po.orderNumber) {
+        const matchingInv = packagePurchaseInvoices.find(
+          (inv: any) => inv.notes && inv.notes.includes(po.orderNumber)
+        );
+        if (matchingInv) invNum = matchingInv.invoiceNumber;
       }
-      if (!invNum && po.orderNumber) {
-        const inv = await Invoice.findOne({ 
-          notes: { $regex: po.orderNumber, $options: 'i' }, 
-          status: { $nin: ['cancelled', 'voided'] } 
-        }).select('invoiceNumber').lean();
-        invNum = (inv as any)?.invoiceNumber;
-      }
+
+      // Calculate the actual purchase amount (use packageSnapshot.price as primary, fallback to amount)
+      const purchaseAmount = Number(po.packageSnapshot?.price || po.amount || 0);
+
       return {
         ...po,
-        totalAmount: Number(po.amount || po.totalAmount || 0),
+        totalAmount: purchaseAmount,
         packageName: po.packageSnapshot?.name || 'Paket',
         invoiceNumber: invNum || '-'
       };
-    }));
+    });
+
+    // ── Enrich Package Usage with invoice numbers ──
+    // Collect all invoice ObjectIds from usage ledger entries and bulk-fetch
+    const usageInvoiceIds = packageUsage
+      .filter((u: any) => u.invoice && mongoose.Types.ObjectId.isValid(String(u.invoice)))
+      .map((u: any) => u.invoice);
+
+    let invoiceMap: Record<string, string> = {};
+    if (usageInvoiceIds.length > 0) {
+      const usageInvoices = await Invoice.find({ _id: { $in: usageInvoiceIds } })
+        .select('invoiceNumber')
+        .lean<any[]>();
+      for (const inv of usageInvoices) {
+        invoiceMap[String(inv._id)] = inv.invoiceNumber;
+      }
+    }
 
     const enrichedPackageUsage = packageUsage.map((u: any) => ({
       ...u,
-      invoiceNumber: u.invoice?.invoiceNumber || (typeof u.invoice === 'string' ? u.invoice : undefined) || '-'
+      invoiceNumber: (u.invoice && invoiceMap[String(u.invoice)]) || '-'
     }));
 
     return NextResponse.json({
