@@ -1,6 +1,6 @@
 import { decryptFonnteToken } from './encryption';
 import { tryConsumeUsage } from './subscriptionEnforcement';
-import { sendViaBalesOtomatis, type WaProviderConfig } from './waProvider';
+import { sendViaBalesOtomatis, type WaProviderConfig, type WaMediaOptions } from './waProvider';
 
 export interface SendWhatsAppResult {
     success: boolean;
@@ -31,7 +31,8 @@ export async function sendWhatsApp(
     phone: string,
     message: string,
     providerConfig?: string | WaProviderConfig,
-    storeId?: string
+    storeId?: string,
+    mediaOptions?: WaMediaOptions
 ): Promise<SendWhatsAppResult> {
     if (storeId) {
         const usageCheck = await tryConsumeUsage(storeId, 'wa', 1);
@@ -58,19 +59,19 @@ export async function sendWhatsApp(
             if (!providerConfig.balesotomatis) {
                 return { success: false, error: 'Konfigurasi BalesOtomatis kosong.' };
             }
-            const result = await sendViaBalesOtomatis(providerConfig.balesotomatis, phone, message);
+            const result = await sendViaBalesOtomatis(providerConfig.balesotomatis, phone, message, mediaOptions);
             return result;
         }
         // provider === 'fonnte' tapi dibungkus object (dari getWaProviderConfigFromSettings) -
         // lanjut ke jalur Fonnte biasa di bawah dengan token dari dalam object-nya.
-        return sendViaFonnte(phone, message, providerConfig.fonnteToken);
+        return sendViaFonnte(phone, message, providerConfig.fonnteToken, mediaOptions);
     }
 
     // providerConfig sebagai string (atau undefined) = jalur LEGACY, behavior sama persis kayak sebelumnya.
-    return sendViaFonnte(phone, message, providerConfig);
+    return sendViaFonnte(phone, message, providerConfig, mediaOptions);
 }
 
-async function sendViaFonnte(phone: string, message: string, fonnteToken?: string): Promise<SendWhatsAppResult> {
+async function sendViaFonnte(phone: string, message: string, fonnteToken?: string, mediaOptions?: WaMediaOptions): Promise<SendWhatsAppResult> {
     let token = (fonnteToken ?? '').trim();
 
     // If caller passed a token, use it as-is (caller is responsible for decrypting).
@@ -96,16 +97,27 @@ async function sendViaFonnte(phone: string, message: string, fonnteToken?: strin
     }
 
     try {
+        const payload: any = {
+            target: phone,
+            message: message,
+        };
+
+        if (mediaOptions?.url) {
+            payload.url = mediaOptions.url;
+            if (mediaOptions.fileName) {
+                payload.filename = mediaOptions.fileName;
+            }
+        } else if (mediaOptions?.type === 'location' && mediaOptions.lat && mediaOptions.long) {
+            payload.location = `${mediaOptions.lat},${mediaOptions.long}`;
+        }
+
         const response = await fetch('https://api.fonnte.com/send', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 Authorization: token,
             },
-            body: JSON.stringify({
-                target: phone,
-                message: message,
-            }),
+            body: JSON.stringify(payload),
         });
 
         const text = await response.text();

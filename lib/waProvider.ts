@@ -47,6 +47,15 @@ export interface ProviderSendResult {
     error?: string;
 }
 
+export interface WaMediaOptions {
+    type?: 'image' | 'document' | 'location';
+    url?: string;
+    fileName?: string; // used for document
+    lat?: string;      // used for location
+    long?: string;     // used for location
+    locationName?: string; // used for location
+}
+
 /** "6281234567890" -> { countryCode: "62", localNumber: "81234567890" }.
  *  BalesOtomatis (kedua mode) minta phone_no & country_code TERPISAH, beda dari
  *  Fonnte yang cukup 1 field gabungan. Asumsi nomor Indonesia (country code 62),
@@ -97,7 +106,8 @@ async function postJson(path: string, body: Record<string, unknown>): Promise<an
 export async function sendViaBalesOtomatis(
     cfg: BalesOtomatisConfig,
     phone: string,
-    message: string
+    message: string,
+    mediaOptions?: WaMediaOptions
 ): Promise<ProviderSendResult> {
     const { countryCode, localNumber } = splitIndonesianPhone(phone);
 
@@ -110,14 +120,34 @@ export async function sendViaBalesOtomatis(
             // dalam 24 jam terakhir) - kalau dipakai buat notifikasi proaktif (reminder, invoice)
             // di luar window, BalesOtomatis akan reject dan tenant PERLU pakai Send Template
             // (/send_message_template) yang butuh template pre-approved Meta, bukan free text.
-            const data = await postJson('/send_meta_personal_message', {
+            const payload: any = {
                 secret_key: cfg.secretKey,
                 licenses_key: cfg.licensesKey,
                 reciptient: `${countryCode}${localNumber}`, // nama field ini emang typo dari sononya, lihat catatan di atas
                 platform: 'whatsapp',
-                message,
                 method_send: 'async',
-            });
+            };
+
+            if (mediaOptions?.type === 'image' && mediaOptions.url) {
+                payload.image_url = mediaOptions.url;
+                payload.send_as_caption = 1;
+                payload.message = message;
+            } else if (mediaOptions?.type === 'document' && mediaOptions.url) {
+                payload.file_url = mediaOptions.url;
+                payload.fileName = mediaOptions.fileName || 'file.pdf';
+                payload.messageType = 'document';
+                if (message) payload.message = message;
+            } else if (mediaOptions?.type === 'location' && mediaOptions.lat && mediaOptions.long) {
+                payload.latitude = mediaOptions.lat;
+                payload.longitude = mediaOptions.long;
+                payload.nameLocation = mediaOptions.locationName || '';
+                payload.messageType = 'location';
+                if (message) payload.message = message;
+            } else {
+                payload.message = message;
+            }
+
+            const data = await postJson('/send_meta_personal_message', payload);
             return parseBalesOtomatisResponse(data);
         }
 
@@ -125,7 +155,7 @@ export async function sendViaBalesOtomatis(
         if (!cfg.apiKey || !cfg.numberId) {
             return { success: false, error: 'BalesOtomatis Un-Official belum dikonfigurasi (apiKey/numberId kosong).' };
         }
-        const data = await postJson('/send_personal_message', {
+        const payloadUnOfficial: any = {
             api_key: cfg.apiKey,
             number_id: cfg.numberId,
             enable_typing: '1',
@@ -133,7 +163,15 @@ export async function sendViaBalesOtomatis(
             phone_no: localNumber,
             country_code: countryCode,
             message,
-        });
+        };
+
+        if (mediaOptions?.url) {
+            payloadUnOfficial.url = mediaOptions.url;
+            if (mediaOptions.type === 'document') payloadUnOfficial.type = 'document';
+            else if (mediaOptions.type === 'image') payloadUnOfficial.type = 'image';
+        }
+
+        const data = await postJson('/send_personal_message', payloadUnOfficial);
         return parseBalesOtomatisResponse(data);
     } catch (error: any) {
         return { success: false, error: error?.message || 'Unknown error while sending via BalesOtomatis' };
