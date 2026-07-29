@@ -45,13 +45,20 @@ export async function POST(request: NextRequest, props: any) {
         }
 
         const cleanName = template.name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-        template.metaStatus = 'PENDING';
+        const fbResponse = result.data?.fb_response;
+        const reviewStatus = fbResponse?.status === 'APPROVED' ? 'APPROVED' : 'PENDING';
+        template.metaStatus = reviewStatus;
         template.metaTemplateName = cleanName;
+        if (fbResponse?.id) template.metaTemplateId = fbResponse.id;
         await template.save();
+
+        const reviewNotice = result.data?.review_notice_message 
+            ? ` ${result.data.review_notice_message}` 
+            : ' Meta biasanya memerlukan 10 menit hingga maks 3 hari untuk review template.';
 
         return NextResponse.json({
             success: true,
-            message: 'Template berhasil diajukan ke server Meta WABA! Status saat ini: Sedang Ditinjau (Pending).',
+            message: `Template berhasil diajukan ke Meta WABA! Status: ${reviewStatus === 'APPROVED' ? 'Disetujui' : 'Sedang Ditinjau (In Review)'}.${reviewNotice}`,
             data: template,
         });
     } catch (error: any) {

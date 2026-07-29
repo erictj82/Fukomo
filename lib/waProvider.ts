@@ -192,16 +192,13 @@ export async function createBalesOtomatisTemplate(
                 }
             ]
         };
-        const candidateEndpoints = ['/create_template', '/add_template', '/create-template', '/add-template', '/create_message_template', '/add_message_template'];
-        for (const endpoint of candidateEndpoints) {
-            const data = await postJson(endpoint, payload);
-            if (data?.code === '200' || data?.code === 200 || data?.success || data?.status === true) {
-                return { success: true, data };
-            }
+        const data = await postJson('/create-template', payload);
+        if (data?.success || data?.code === '200' || data?.code === 200 || data?.fb_response) {
+            return { success: true, data };
         }
         return { 
             success: false, 
-            error: 'Endpoint pembuatan template otomatis di API BalesOtomatis WABA tidak tersedia atau merespons HTTP 404. Silakan buat dan ajukan template secara langsung melalui dashboard BalesOtomatis atau Meta Business Suite.' 
+            error: typeof data?.message === 'string' ? data.message : 'Gagal mengajukan template ke Meta. Pastikan kredensial WABA Anda valid.' 
         };
     } catch (error: any) {
         return { success: false, error: error?.message || 'Gagal menghubungi server WABA Meta' };

@@ -58,7 +58,9 @@ export async function GET(request: NextRequest, props: any) {
                 }
                 if (!matched) {
                     let bodyText = metaName;
-                    if (Array.isArray(t.components)) {
+                    if (typeof t.template_content === 'string' && t.template_content) {
+                        bodyText = t.template_content;
+                    } else if (Array.isArray(t.components)) {
                         const bodyComp = t.components.find((c: any) => c.type === 'BODY' || c.type === 'body');
                         if (bodyComp && bodyComp.text) bodyText = bodyComp.text;
                     } else if (typeof t.message === 'string' && t.message) {
