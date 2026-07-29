@@ -38,7 +38,6 @@ export default function WaTemplatesPage() {
     const [wabaLoading, setWabaLoading] = useState(false);
     const [wabaError, setWabaError] = useState<string | null>(null);
     const [isWabaMode, setIsWabaMode] = useState(false);
-    const [submittingMetaId, setSubmittingMetaId] = useState<string | null>(null);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<WaTemplate | null>(null);
@@ -134,29 +133,6 @@ export default function WaTemplatesPage() {
     const closeModal = () => {
         setIsModalOpen(false);
         setEditingTemplate(null);
-    };
-
-    const handleSubmitToMeta = async (t: WaTemplate) => {
-        if (!confirm(`Apakah Anda yakin ingin mengajukan template "${t.name}" ke server Meta (WhatsApp Business API)?`)) return;
-        setSubmittingMetaId(t._id);
-        try {
-            const res = await fetch(`/api/wa/templates/${t._id}/submit-meta`, {
-                method: "POST",
-                headers: { "x-store-slug": slug },
-            });
-            const data = await res.json();
-            if (data.success) {
-                alert("✅ " + data.message);
-                fetchTemplates();
-                fetchWabaTemplates();
-            } else {
-                alert("❌ Gagal: " + (data.error || "Gagal mengajukan ke Meta"));
-            }
-        } catch (e: any) {
-            alert("❌ Terjadi kesalahan: " + e.message);
-        } finally {
-            setSubmittingMetaId(null);
-        }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -412,19 +388,6 @@ export default function WaTemplatesPage() {
                                     </div>
                                 </div>
                                 <div className="flex gap-2 flex-wrap items-center">
-                                    {isWabaMode && template.metaStatus !== 'APPROVED' && (
-                                        <PermissionGate resource="waTemplates" action="edit">
-                                            <button
-                                                type="button"
-                                                disabled={submittingMetaId === template._id}
-                                                onClick={() => handleSubmitToMeta(template)}
-                                                className="px-3 py-2 border border-emerald-400 bg-emerald-50 rounded-lg text-sm font-semibold text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 shadow-sm transition-all disabled:opacity-50"
-                                                title="Ajukan persetujuan template ini ke server Meta agar bisa dikirim di luar batas 24 jam"
-                                            >
-                                                <span>🚀</span> {submittingMetaId === template._id ? "Mengajukan..." : "Ajukan ke Meta"}
-                                            </button>
-                                        </PermissionGate>
-                                    )}
                                     {(template.templateType === 'greeting' || (!template.templateType && template.isGreetingEnabled)) && (
                                         <PermissionGate resource="waTemplates" action="edit">
                                             <button
