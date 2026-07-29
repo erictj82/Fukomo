@@ -15,7 +15,8 @@ export async function GET(request: NextRequest) {
 
         const staffMembers = await Staff.find({ isActive: true })
             .select("_id name commissionRate")
-            .sort({ name: 1 });
+            .sort({ name: 1 })
+            .lean();
 
         return NextResponse.json({ success: true, data: staffMembers });
     } catch (error) {

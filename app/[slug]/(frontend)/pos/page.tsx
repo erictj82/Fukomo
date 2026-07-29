@@ -605,100 +605,41 @@ export default function POSPage() {
   const fetchResources = async () => {
     setLoading(true);
     try {
-      const [
-        serviceRes,
-        productRes,
-        packageRes,
-        bundleRes,
-        customerRes,
-        staffRes,
-      ] = await Promise.all([
-        fetch("/api/services/pos-list", { headers: storeHeaders }),
-        fetch("/api/products/pos-list", { headers: storeHeaders }),
-        fetch("/api/service-packages?active=true", { headers: storeHeaders }),
-        fetch("/api/service-bundles", { headers: storeHeaders }),
-        fetch("/api/customers/pos-list", { headers: storeHeaders }),
-        fetch("/api/staff/pos-list", { headers: storeHeaders }),
-      ]);
+      const res = await fetch("/api/pos/resources", { headers: storeHeaders });
+      const data = await res.json().catch(() => ({ success: false, error: "HTTP parse error" }));
 
-      // Safe JSON parse — kalau response bukan JSON (404/empty), return failed object
-      const safeJson = async (res: Response) => {
-        try { return await res.json(); } catch { return { success: false, error: `HTTP ${res.status}` }; }
-      };
-
-      const [sData, pData, pkgData, bData, cData, stData] = await Promise.all([
-        safeJson(serviceRes),
-        safeJson(productRes),
-        safeJson(packageRes),
-        safeJson(bundleRes),
-        safeJson(customerRes),
-        safeJson(staffRes),
-      ]);
-
-      if (sData.success) {
-        setServices(
-          (sData.data || []).map((s: Item) => ({ ...s, type: "Service" })),
-        );
-      }
-      if (pData.success) {
-        setProducts(
-          (pData.data || []).map((p: Item) => ({ ...p, type: "Product" })),
-        );
-      }
-      if (pkgData.success) {
-        setPackages(
-          (pkgData.data || []).map((pkg: Item) => ({
-            ...pkg,
-            type: "Package",
-          })),
-        );
-      }
-      if (bData.success) {
-        setServiceBundles(
-          (bData.data || []).map((b: any) => ({
-            _id: b._id,
-            name: b.name,
-            price: b.price,
-            image: b.image,
-            type: "Bundle" as const,
-            bundleServices: (b.services || []).map((s: any) => ({
-              service: s.service?._id,
-              serviceName: s.service?.name,
-              servicePrice: s.service?.price,
-              duration: s.service?.duration,
-              // [BUG FIX] Sebelumnya baca s.service?.commissionType/commissionValue —
-              // itu komisi master Service standalone, BUKAN komisi khusus yang
-              // di-set admin di dalam form Bundle (halaman Bundles, per-service).
-              // Akibatnya kalau komisi master Service-nya 0 (wajar, karena
-              // komisinya justru mau di-set khusus lewat bundle), validasi POS
-              // "Komisi service X dalam bundle Y belum diisi" selalu gagal dan
-              // checkout Bundle (sendiri atau digabung Service) tidak bisa diproses.
-              commissionType: s.commissionType || s.service?.commissionType,
-              commissionValue: s.commissionValue || s.service?.commissionValue,
-            })),
-          })),
-        );
-      }
-      if (cData.success) {
-        setCustomers(cData.data);
-      }
-      if (stData.success) {
-        setStaffList(stData.data);
-      }
-
-      // Tampilkan warning kalau ada resource yang gagal dimuat (403 / error lain)
-      const failed: string[] = [];
-      if (!stData.success) failed.push("Staff");
-      if (!sData.success) failed.push("Services");
-      if (!pData.success) failed.push("Products");
-      if (!pkgData.success) failed.push("Packages");
-      if (!bData.success) failed.push("Bundles");
-      if (!cData.success) failed.push("Customers");
-      if (failed.length > 0) {
-        showToast(`Data tidak dapat dimuat: ${failed.join(", ")}. Hubungi admin untuk mengatur permission.`, "warning");
+      if (data.success && data.data) {
+        const { services: sList, products: pList, packages: pkgList, bundles: bList, customers: cList, staff: stList } = data.data;
+        if (sList) setServices(sList.map((s: Item) => ({ ...s, type: "Service" })));
+        if (pList) setProducts(pList.map((p: Item) => ({ ...p, type: "Product" })));
+        if (pkgList) setPackages(pkgList.map((pkg: Item) => ({ ...pkg, type: "Package" })));
+        if (bList) {
+          setServiceBundles(
+            bList.map((b: any) => ({
+              _id: b._id,
+              name: b.name,
+              price: b.price,
+              image: b.image,
+              type: "Bundle" as const,
+              bundleServices: (b.services || []).map((s: any) => ({
+                service: s.service?._id,
+                serviceName: s.service?.name,
+                servicePrice: s.service?.price,
+                duration: s.service?.duration,
+                commissionType: s.commissionType || s.service?.commissionType,
+                commissionValue: s.commissionValue || s.service?.commissionValue,
+              })),
+            }))
+          );
+        }
+        if (cList) setCustomers(cList);
+        if (stList) setStaffList(stList);
+      } else {
+        showToast(`Data tidak dapat dimuat: ${data.error || "Gagal memuat POS resources"}. Hubungi admin.`, "warning");
       }
     } catch (error) {
       console.error(error);
+      showToast("Terjadi kesalahan saat memuat data POS.", "warning");
     } finally {
       setLoading(false);
     }
@@ -2426,51 +2367,7 @@ export default function POSPage() {
           }
         }
 
-        // If there's a payment, create deposit record(s) — one per split payment entry
-        if (paid > 0) {
-          const depositEntries = splitPayments.filter((p) => {
-            const amt = parseFloat(String(p.amount || "0"));
-            return Number.isFinite(amt) && amt > 0;
-          });
-
-          if (depositEntries.length > 0) {
-            // Split payment: create one deposit per method
-            for (const entry of depositEntries) {
-              const entryAmount = parseFloat(String(entry.amount || "0")) || 0;
-              // Wallet deduction is handled centrally in the backend API (app/api/invoices/route.ts)
-
-              await fetch("/api/deposits", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...storeHeaders },
-                body: JSON.stringify({
-                  invoice: data.data._id,
-                  customer: customerId,
-                  amount: entryAmount,
-                  paymentMethod: entry.method,
-                  skipWalletDeduction: true,
-                  notes:
-                    depositEntries.length > 1
-                      ? `Split payment (${entry.method}) dari POS`
-                      : "Initial payment from POS",
-                }),
-              });
-            }
-          } else {
-            // Fallback: single deposit using total paid amount
-            await fetch("/api/deposits", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...storeHeaders },
-              body: JSON.stringify({
-                invoice: data.data._id,
-                customer: customerId,
-                amount: paid,
-                paymentMethod,
-                skipWalletDeduction: true,
-                notes: "Initial payment from POS",
-              }),
-            });
-          }
-        }
+        // Deposit records are now created atomically in backend POST /api/invoices
 
         // Auto-complete appointment if checkout was initiated from a booking
         if (appointmentId) {
@@ -2496,16 +2393,16 @@ export default function POSPage() {
                 return [];
               });
 
-            await fetch(`/api/appointments/${appointmentId}`, {
+            fetch(`/api/appointments/${appointmentId}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json", ...storeHeaders },
               body: JSON.stringify({ 
                  status: "completed",
                  services: updatedServices.length > 0 ? updatedServices : undefined
               }),
-            });
+            }).catch(err => console.error("Failed to auto-complete appointment in background:", err));
           } catch (err) {
-            console.error("Failed to auto-complete appointment:", err);
+            console.error("Failed to format appointment services:", err);
           }
         }
 

@@ -22,9 +22,9 @@ export async function GET(request: NextRequest, props: any) {
             return NextResponse.json({ success: false, error: 'Link tidak valid atau sudah kadaluarsa' }, { status: 404 });
         }
 
-        // Fetch settings for store name
+        // Fetch settings for store name and wallet expiry
         const settings: any = await Settings.findOne({})
-            .select('storeName')
+            .select('storeName walletExpiryDays symbol')
             .lean();
 
         // Fetch recent invoices (last 20, exclude voided)
@@ -54,15 +54,29 @@ export async function GET(request: NextRequest, props: any) {
             .limit(20)
             .lean();
 
+        const expiryDays = Number(settings?.walletExpiryDays || 0);
+        let walletExpiryDate: string | null = null;
+        if (expiryDays > 0 && (customer.walletBalance || 0) > 0) {
+            const latestTx = await WalletTransaction.findOne({ customer: customer._id }).sort({ createdAt: -1 }).select('createdAt').lean();
+            const baseDate = latestTx?.createdAt ? new Date(latestTx.createdAt) : new Date();
+            const expDate = new Date(baseDate.getTime() + expiryDays * 24 * 60 * 60 * 1000);
+            walletExpiryDate = expDate.toISOString();
+        }
+
         return NextResponse.json({
             success: true,
             data: {
-                customer,
+                customer: {
+                    ...customer,
+                    walletExpiryDate,
+                },
                 invoices,
                 activePackages,
                 walletTransactions,
                 settings: {
-                    storeName: settings?.storeName || 'Salon'
+                    storeName: settings?.storeName || 'Salon',
+                    walletExpiryDays: expiryDays,
+                    symbol: settings?.symbol || 'Rp'
                 }
             }
         });

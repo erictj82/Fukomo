@@ -134,7 +134,7 @@ export async function PUT(request: NextRequest, props: any) {
             'bankTransferPassword', 'ownerTransferPassword',
             'waAppointmentReminderEnabled', 'waAppointmentReminderMinutesBefore',
             'waAppointmentReminderDefaultTemplate', 'waNotaTemplate', 'waAdminNotaPrefix',
-            'waProvider', 'balesotomatisMode', 'balesotomatisApiKey', 'balesotomatisNumberId',
+            'waProvider', 'waHybridMode', 'balesotomatisMode', 'balesotomatisApiKey', 'balesotomatisNumberId',
             'balesotomatisSecretKey', 'balesotomatisLicensesKey'
         ];
 

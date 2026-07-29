@@ -35,11 +35,16 @@ export async function PUT(request: NextRequest, props: any) {
         if (expiresAt !== undefined) pkg.expiresAt = expiresAt ? new Date(expiresAt) : null;
         if (serviceQuotas && Array.isArray(serviceQuotas)) {
             for (const update of serviceQuotas) {
-                const quota = pkg.serviceQuotas.find((q: any) => String(q.service) === String(update.service));
+                const quota = pkg.serviceQuotas.find((q: any) => 
+                    (update.service && String(q.service) === String(update.service)) ||
+                    (update._id && String(q._id) === String(update._id)) ||
+                    (update.serviceName && q.serviceName === update.serviceName)
+                );
                 if (quota) {
                     quota.remainingQuota = Math.max(0, Number(update.remainingQuota));
                 }
             }
+            pkg.markModified('serviceQuotas');
         }
         await pkg.save();
 

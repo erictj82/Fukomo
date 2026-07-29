@@ -25,7 +25,9 @@ interface InvoiceHistoryItem {
 
 interface PackageOrderHistoryItem {
   _id: string;
+  amount?: number;
   totalAmount: number;
+  orderNumber?: string;
   status: string;
   paymentMethod?: string;
   paidAt?: Date;
@@ -34,6 +36,9 @@ interface PackageOrderHistoryItem {
     name?: string;
     code?: string;
   };
+  invoice?: any;
+  invoiceNumber?: string;
+  packageName?: string;
 }
 
 interface PackageUsageHistoryItem {
@@ -49,6 +54,7 @@ interface PackageUsageHistoryItem {
     invoiceNumber?: string;
     date?: Date;
   };
+  invoiceNumber?: string;
 }
 
 export async function GET(request: NextRequest, props: any) {
@@ -80,25 +86,55 @@ export async function GET(request: NextRequest, props: any) {
         .limit(30)
         .lean<InvoiceHistoryItem[]>(),
       PackageOrder.find({ customer: id })
-        .select('totalAmount status paymentMethod paidAt createdAt packageSnapshot.name packageSnapshot.code')
+        .select('amount totalAmount orderNumber status paymentMethod paidAt createdAt packageSnapshot invoice')
         .sort({ createdAt: -1 })
         .limit(30)
-        .lean<PackageOrderHistoryItem[]>(),
+        .lean<any[]>(),
       PackageUsageLedger.find({ customer: id })
         .populate('invoice', 'invoiceNumber date')
         .select('serviceName quantity usedAt sourceType note invoice createdAt')
         .sort({ usedAt: -1 })
         .limit(50)
-        .lean<PackageUsageHistoryItem[]>(),
+        .lean<any[]>(),
     ]);
+
+    const enrichedPackageOrders = await Promise.all(packageOrders.map(async (po: any) => {
+      let invNum: string | null = null;
+      if (po.invoice) {
+        if (typeof po.invoice === 'object' && po.invoice.invoiceNumber) {
+          invNum = po.invoice.invoiceNumber;
+        } else {
+          const inv = await Invoice.findById(po.invoice).select('invoiceNumber').lean();
+          invNum = (inv as any)?.invoiceNumber;
+        }
+      }
+      if (!invNum && po.orderNumber) {
+        const inv = await Invoice.findOne({ 
+          notes: { $regex: po.orderNumber, $options: 'i' }, 
+          status: { $nin: ['cancelled', 'voided'] } 
+        }).select('invoiceNumber').lean();
+        invNum = (inv as any)?.invoiceNumber;
+      }
+      return {
+        ...po,
+        totalAmount: Number(po.amount || po.totalAmount || 0),
+        packageName: po.packageSnapshot?.name || 'Paket',
+        invoiceNumber: invNum || '-'
+      };
+    }));
+
+    const enrichedPackageUsage = packageUsage.map((u: any) => ({
+      ...u,
+      invoiceNumber: u.invoice?.invoiceNumber || (typeof u.invoice === 'string' ? u.invoice : undefined) || '-'
+    }));
 
     return NextResponse.json({
       success: true,
       data: {
         customer,
         invoices,
-        packageOrders,
-        packageUsage,
+        packageOrders: enrichedPackageOrders,
+        packageUsage: enrichedPackageUsage,
       },
     });
   } catch (error: unknown) {

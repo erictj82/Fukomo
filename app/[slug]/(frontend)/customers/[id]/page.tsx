@@ -82,13 +82,16 @@ interface PackageOrder {
   status: string;
   packageName?: string;
   totalAmount: number;
+  invoiceNumber?: string;
 }
 
 interface PackageUsage {
   _id: string;
   createdAt: string;
+  usedAt?: string;
   serviceName: string;
   quantity: number;
+  invoiceNumber?: string;
 }
 
 interface BeforeAfterPhoto {
@@ -310,6 +313,7 @@ export default function CustomerDashboardPage() {
       expiresAt: pkg.expiresAt ? new Date(pkg.expiresAt).toISOString().split('T')[0] : "",
       serviceQuotas: pkg.serviceQuotas.map(q => ({
         _id: (q as any)._id,
+        service: (q as any).service || (q as any)._id,
         serviceName: q.serviceName,
         remainingQuota: q.remainingQuota
       }))
@@ -925,7 +929,7 @@ export default function CustomerDashboardPage() {
                                   {po.packageName || "Paket"}
                                 </p>
                                 <p className="text-xs text-gray-500">
-                                  {fmtDate(po.createdAt)}
+                                  {fmtDate(po.createdAt)} {po.invoiceNumber && po.invoiceNumber !== '-' ? `• Inv: ${po.invoiceNumber}` : ''}
                                 </p>
                               </div>
                               <div className="text-right">
@@ -963,7 +967,7 @@ export default function CustomerDashboardPage() {
                                   {u.serviceName}
                                 </p>
                                 <p className="text-xs text-gray-500">
-                                  {fmtDate(u.createdAt)}
+                                  {fmtDate(u.createdAt || u.usedAt || "")} {u.invoiceNumber && u.invoiceNumber !== '-' ? `• Inv: ${u.invoiceNumber}` : ''}
                                 </p>
                               </div>
                               <span className="text-xs font-bold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">

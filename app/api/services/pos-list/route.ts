@@ -16,7 +16,8 @@ export async function GET(request: NextRequest) {
         const services = await Service.find({ status: "active" })
             .populate("category", "name")
             .select("_id name price memberPrice image icon duration commissionType commissionValue sellingCommissionType sellingCommissionValue waFollowUp parentService isFavorite category")
-            .sort({ name: 1 });
+            .sort({ name: 1 })
+            .lean();
 
         return NextResponse.json({ success: true, data: services });
     } catch (error) {

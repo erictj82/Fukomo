@@ -11,7 +11,8 @@ export async function GET(request: NextRequest) {
 
     const bundles = await ServiceBundle.find({ isActive: true })
       .populate("services.service", "name price commissionType commissionValue sellingCommissionType sellingCommissionValue duration")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     return NextResponse.json({ success: true, data: bundles });
   } catch (error) {

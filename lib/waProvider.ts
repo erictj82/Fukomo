@@ -74,7 +74,7 @@ function parseBalesOtomatisResponse(data: any): ProviderSendResult {
             ? rawMessage
             : rawMessage?.detail || rawMessage?.state || JSON.stringify(rawMessage) || `BalesOtomatis error (code ${data?.code})`;
 
-    return { success: false, error, data };
+    return { success: false, error };
 }
 
 async function postJson(path: string, body: Record<string, unknown>): Promise<any> {
@@ -87,7 +87,10 @@ async function postJson(path: string, body: Record<string, unknown>): Promise<an
     try {
         return text ? JSON.parse(text) : {};
     } catch {
-        return { code: String(response.status), message: text };
+        const cleanMsg = text && (text.trim().startsWith('<') || text.includes('<!DOCTYPE') || text.includes('<html'))
+            ? `Server WABA BalesOtomatis merespons HTTP ${response.status} (Endpoint tidak tersedia / halaman HTML)`
+            : text;
+        return { code: String(response.status), message: cleanMsg };
     }
 }
 
@@ -144,7 +147,7 @@ export async function testBalesOtomatisWaba(
     secretKey: string,
     licensesKey: string
 ): Promise<{ success: boolean; templateCount?: number; templates?: any[]; error?: string }> {
-    if (!secretKey || !licensesKey) return { success: false, error: 'secretKey/licensesKey kosong' };
+    if (!secretKey || !licensesKey) return { success: false, error: 'Kredensial WABA kosong.' };
     try {
         const data = await postJson('/get-template-list', {
             secret_key: secretKey,
@@ -155,7 +158,7 @@ export async function testBalesOtomatisWaba(
             start: 0,
             length: 100,
         });
-        if (data?.code !== '200') {
+        if (data?.code !== '200' && data?.code !== 200 && !data?.success && data?.status !== true) {
             return { success: false, error: typeof data?.message === 'string' ? data.message : 'Kredensial WABA tidak valid' };
         }
         const templates = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.templates) ? data.templates : []);
@@ -189,22 +192,17 @@ export async function createBalesOtomatisTemplate(
                 }
             ]
         };
-        const data = await postJson('/create_template', payload);
-        if (data?.code !== '200' && data?.code !== 200 && !data?.success && data?.status !== true) {
-            const altData = await postJson('/add_template', payload);
-            if (altData?.code !== '200' && altData?.code !== 200 && !altData?.success && altData?.status !== true) {
-                const altData2 = await postJson('/create-template', payload);
-                if (altData2?.code !== '200' && altData2?.code !== 200 && !altData2?.success && altData2?.status !== true) {
-                    return { 
-                        success: false, 
-                        error: typeof data?.message === 'string' ? data.message : (typeof altData?.message === 'string' ? altData.message : 'Gagal mendaftarkan template ke server WABA Meta. Pastikan format nama huruf kecil tanpa spasi.') 
-                    };
-                }
-                return { success: true, data: altData2 };
+        const candidateEndpoints = ['/create_template', '/add_template', '/create-template', '/add-template', '/create_message_template', '/add_message_template'];
+        for (const endpoint of candidateEndpoints) {
+            const data = await postJson(endpoint, payload);
+            if (data?.code === '200' || data?.code === 200 || data?.success || data?.status === true) {
+                return { success: true, data };
             }
-            return { success: true, data: altData };
         }
-        return { success: true, data };
+        return { 
+            success: false, 
+            error: 'Endpoint pembuatan template otomatis di API BalesOtomatis WABA tidak tersedia atau merespons HTTP 404. Silakan buat dan ajukan template secara langsung melalui dashboard BalesOtomatis atau Meta Business Suite.' 
+        };
     } catch (error: any) {
         return { success: false, error: error?.message || 'Gagal menghubungi server WABA Meta' };
     }

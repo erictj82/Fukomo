@@ -87,7 +87,7 @@ const normalizeSplitAssignments = (assignments: any[] = []) => {
 
 export async function POST(request: NextRequest, props: any) {
   const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-  const { Invoice, Customer, Product, Service, Settings, CashBalance, CashLog, WalletTransaction, LoyaltyTransaction, Voucher, StockLog } = await getTenantModels(tenantSlug);
+  const { Invoice, Customer, Product, Service, Settings, CashBalance, CashLog, WalletTransaction, LoyaltyTransaction, Voucher, StockLog, Deposit, Appointment } = await getTenantModels(tenantSlug);
 
   try {
 
@@ -124,6 +124,8 @@ export async function POST(request: NextRequest, props: any) {
     // sengaja TIDAK diblokir daripada nge-lockout toko yang datanya belum lengkap.
 
     const body = await request.json();
+    const systemSettingsDoc = await Settings.findOne().lean() as any;
+    const settings = systemSettingsDoc || {};
 
     if (toNum(body.totalAmount) < 0 || toNum(body.amountPaid) < 0 || toNum(body.discount) < 0 || toNum(body.tax) < 0 || toNum(body.loyaltyPointsUsed) < 0) {
       return NextResponse.json({ success: false, error: "Nilai nominal tidak boleh negatif." }, { status: 400 });
@@ -347,6 +349,43 @@ export async function POST(request: NextRequest, props: any) {
       }
     }
 
+    // --- ATOMIC DEPOSIT RECORD CREATION & APPOINTMENT COMPLETION ---
+    if (invoice.status === "paid" || invoice.status === "partially_paid") {
+      if (normalizedBody.appointment && Appointment) {
+        Appointment.findByIdAndUpdate(normalizedBody.appointment, { status: "completed" }).catch((err: any) => console.error("Auto complete appointment error:", err));
+      }
+
+      if (Deposit) {
+        const depositDocs: any[] = [];
+        if (invoice.paymentMethods && invoice.paymentMethods.length > 0) {
+          for (const p of invoice.paymentMethods) {
+            if (p.amount > 0) {
+              depositDocs.push({
+                invoice: invoice._id,
+                customer: invoice.customer || undefined,
+                amount: p.amount,
+                paymentMethod: p.method || 'Cash',
+                date: invoice.date || new Date(),
+                notes: invoice.paymentMethods.length > 1 ? `Split payment (${p.method})` : "Initial payment",
+              });
+            }
+          }
+        } else if (invoice.amountPaid > 0) {
+          depositDocs.push({
+            invoice: invoice._id,
+            customer: invoice.customer || undefined,
+            amount: invoice.amountPaid,
+            paymentMethod: invoice.paymentMethod || 'Cash',
+            date: invoice.date || new Date(),
+            notes: "Initial payment",
+          });
+        }
+        if (depositDocs.length > 0) {
+          await Deposit.insertMany(depositDocs);
+        }
+      }
+    }
+
     // --- CASH DRAWER INTEGRATION ---
     if (invoice.status === "paid" || invoice.status === "partially_paid") {
       let cashAmount = 0;
@@ -439,7 +478,6 @@ export async function POST(request: NextRequest, props: any) {
         ) {
           // Send WA low-stock notification to admin — error must NOT fail invoice creation
           try {
-            const settings = await Settings.findOne();
             const adminPhone = settings?.waAdminNumber || settings?.phone;
 
             if (adminPhone) {
@@ -449,9 +487,9 @@ export async function POST(request: NextRequest, props: any) {
                 `Batas minimum: ${updatedProduct.alertQuantity}\n\n` +
                 `Segera lakukan pemesanan stok.`;
 
-              const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
-                const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
-              await sendWhatsApp(adminPhone, message, waConfig);
+              const { getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+              const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
+              sendWhatsApp(adminPhone, message, waConfig).catch((err: any) => console.error(`[LowStock] WA error for ${itemId}:`, err));
             }
           } catch (waError) {
             console.error(
@@ -461,10 +499,10 @@ export async function POST(request: NextRequest, props: any) {
           }
 
           // Mark notif as sent to prevent duplicates
-          await Product.findByIdAndUpdate(itemId, { lowStockNotifSent: true });
+          Product.findByIdAndUpdate(itemId, { lowStockNotifSent: true }).catch((err: any) => console.error(err));
         } else if (updatedProduct.stock > updatedProduct.alertQuantity) {
           // Stock recovered — reset flag so future drops trigger notification again
-          await Product.findByIdAndUpdate(itemId, { lowStockNotifSent: false });
+          Product.findByIdAndUpdate(itemId, { lowStockNotifSent: false }).catch((err: any) => console.error(err));
         }
       } catch (stockError) {
         console.error(
@@ -511,7 +549,6 @@ export async function POST(request: NextRequest, props: any) {
             updatedProduct.lowStockAlertEnabled !== false
           ) {
             try {
-              const settings = await Settings.findOne();
               const adminPhone = settings?.waAdminNumber || settings?.phone;
               if (adminPhone) {
                 const message =
@@ -519,16 +556,16 @@ export async function POST(request: NextRequest, props: any) {
                   `Stok saat ini: ${updatedProduct.stock}\n` +
                   `Batas minimum: ${updatedProduct.alertQuantity}\n\n` +
                   `Segera lakukan pemesanan stok.`;
-                const { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose } = require('@/lib/waProvider');
+                const { getWaProviderConfigForPurpose } = require('@/lib/waProvider');
                 const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
-                await sendWhatsApp(adminPhone, message, waConfig);
+                sendWhatsApp(adminPhone, message, waConfig).catch((err: any) => console.error(`[LowStock] WA error for ${mat.product}:`, err));
               }
             } catch (waError) {
               console.error(`[LowStock] WA notification error for product ${mat.product}:`, waError);
             }
-            await Product.findByIdAndUpdate(mat.product, { lowStockNotifSent: true });
+            Product.findByIdAndUpdate(mat.product, { lowStockNotifSent: true }).catch((err: any) => console.error(err));
           } else if (updatedProduct.stock > updatedProduct.alertQuantity) {
-            await Product.findByIdAndUpdate(mat.product, { lowStockNotifSent: false });
+            Product.findByIdAndUpdate(mat.product, { lowStockNotifSent: false }).catch((err: any) => console.error(err));
           }
         }
       } catch (matErr) {
@@ -544,7 +581,6 @@ export async function POST(request: NextRequest, props: any) {
 
           if (topUpAmount > 0) {
             // Find settings for bonus
-            const settings = await Settings.findOne({}).lean() as any;
             const tiers = (settings?.walletBonusTiers || [])
               .filter((t: any) => t.minAmount && t.bonusPercent)
               .sort((a: any, b: any) => b.minAmount - a.minAmount);
@@ -591,8 +627,7 @@ export async function POST(request: NextRequest, props: any) {
     // Loyalty Point Logic: Calculate points if status is 'paid'
     let pointsToGain = 0;
     if (invoice.status === "paid" && invoice.customer) {
-      const systemSettings = await Settings.findOne();
-      const spendRule = systemSettings?.loyaltyPointPerSpend || 0;
+      const spendRule = settings?.loyaltyPointPerSpend || 0;
       if (spendRule > 0) {
         pointsToGain = Math.floor(invoice.totalAmount / spendRule);
       }
@@ -653,8 +688,7 @@ export async function POST(request: NextRequest, props: any) {
           // Reward logic:
           const isVIP = referrer.membershipExpiry && new Date(referrer.membershipExpiry).getTime() > new Date().getTime();
           if (isVIP) {
-            const systemSettings = await Settings.findOne();
-            const rewardPoints = systemSettings?.referralRewardPoints || 0;
+            const rewardPoints = settings?.referralRewardPoints || 0;
             if (rewardPoints > 0) {
               const updatedReferrer = await Customer.findByIdAndUpdate(referrer._id, {
                 $inc: { loyaltyPoints: rewardPoints },
@@ -679,15 +713,15 @@ export async function POST(request: NextRequest, props: any) {
       }
     }
 
-    await scheduleFollowUp(invoice._id, tenantSlug);
+    scheduleFollowUp(invoice._id, tenantSlug).catch((err: any) => console.error("Follow up error:", err));
 
-    await logActivity({
+    logActivity({
       req: request,
       action: "create",
       resource: "invoice",
       resourceId: invoice._id as string,
       details: `Created invoice ${invoiceNumber} for amount $${invoice.totalAmount}`,
-    });
+    }).catch((err: any) => console.error("Log activity error:", err));
 
     return NextResponse.json({ success: true, data: invoice });
   } catch (error: any) {

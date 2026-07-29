@@ -1,7 +1,7 @@
 import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission } from '@/lib/rbac';
-import { getWaProviderConfigFromSettings, createBalesOtomatisTemplate } from '@/lib/waProvider';
+import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose, createBalesOtomatisTemplate } from '@/lib/waProvider';
 
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest, props: any) {
         }
 
         const settings = await Settings.findOne({}).lean();
-        const waConfig = getWaProviderConfigFromSettings(settings);
+        const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
 
         if (waConfig.provider !== 'balesotomatis' || waConfig.balesotomatis?.mode !== 'waba') {
             return NextResponse.json({

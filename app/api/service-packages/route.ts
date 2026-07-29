@@ -70,7 +70,8 @@ export async function GET(request: NextRequest, props: any) {
 
     const packages = await ServicePackage.find(query)
       .populate('items.service', 'name price')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     return NextResponse.json({ success: true, data: packages });
   } catch (error: unknown) {

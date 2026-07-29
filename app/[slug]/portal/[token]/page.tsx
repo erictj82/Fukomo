@@ -122,6 +122,11 @@ export default function CustomerPortalPage() {
                             <span className="text-2xl font-extrabold text-emerald-600 flex items-center justify-center gap-1">
                                 <Wallet className="w-5 h-5 text-emerald-500 inline" /> {formatRupiah(customer.walletBalance || 0)}
                             </span>
+                            {customer.walletExpiryDate && (customer.walletBalance || 0) > 0 && (
+                                <span className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md inline-block mt-1">
+                                    Berlaku s/d: {formatDate(customer.walletExpiryDate)} {settings?.walletExpiryDays ? `(${settings.walletExpiryDays} hari)` : ''}
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -177,16 +182,19 @@ export default function CustomerPortalPage() {
                             <div className="divide-y divide-gray-100">
                                 {walletTransactions && walletTransactions.length > 0 ? (
                                     walletTransactions.map((wt: any, idx: number) => {
-                                        const isCredit = wt.type === 'topup' || wt.type === 'bonus' || wt.type === 'refund' || (wt.amount > 0 && wt.type !== 'payment');
+                                        const isCredit = wt.type === 'topup' || wt.type === 'bonus' || wt.type === 'refund' || (wt.amount > 0 && wt.type !== 'payment' && wt.type !== 'expired');
+                                        const isExpired = wt.type === 'expired';
                                         return (
                                             <div key={wt._id || idx} className="p-5 hover:bg-gray-50 transition-colors flex justify-between items-center">
                                                 <div>
                                                     <span className="text-xs font-bold text-gray-400 uppercase">{formatDate(wt.createdAt)}</span>
-                                                    <h4 className="font-semibold text-gray-900 mt-1 capitalize">{wt.description || (wt.type === 'topup' ? 'Top-Up Saldo' : wt.type === 'payment' ? 'Pembayaran Transaksi' : wt.type)}</h4>
+                                                    <h4 className={`font-semibold mt-1 capitalize ${isExpired ? 'text-red-600' : 'text-gray-900'}`}>
+                                                        {wt.description || (wt.type === 'topup' ? 'Top-Up Saldo' : wt.type === 'payment' ? 'Pembayaran Transaksi' : wt.type === 'expired' ? 'Expired (Saldo Hangus)' : wt.type)}
+                                                    </h4>
                                                 </div>
                                                 <div className="text-right">
                                                     <div className={`font-bold ${isCredit ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                        {isCredit ? '+' : '-'}{formatRupiah(Math.abs(wt.amount || 0))}
+                                                        {isExpired ? '-' : (isCredit ? '+' : '-')}{formatRupiah(Math.abs(wt.amount || 0))}
                                                     </div>
                                                     <div className="text-xs text-gray-400 mt-0.5">
                                                         Sisa: {formatRupiah(wt.balanceAfter || 0)}

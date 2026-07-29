@@ -16,7 +16,8 @@ export async function GET(request: NextRequest) {
         const products = await Product.find({ status: "active" })
             .populate("category", "name")
             .select("_id name price memberPrice image icon stock commissionType commissionValue isFavorite category")
-            .sort({ name: 1 });
+            .sort({ name: 1 })
+            .lean();
 
         return NextResponse.json({ success: true, data: products });
     } catch (error) {

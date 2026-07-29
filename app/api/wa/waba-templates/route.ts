@@ -1,7 +1,7 @@
 import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermissionWithSession } from '@/lib/rbac';
-import { getWaProviderConfigFromSettings, testBalesOtomatisWaba } from '@/lib/waProvider';
+import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose, testBalesOtomatisWaba } from '@/lib/waProvider';
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest, props: any) {
         }
 
         const settings = await Settings.findOne({}).lean();
-        const waConfig = getWaProviderConfigFromSettings(settings);
+        const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
 
         if (waConfig.provider !== 'balesotomatis' || waConfig.balesotomatis?.mode !== 'waba') {
             return NextResponse.json({
