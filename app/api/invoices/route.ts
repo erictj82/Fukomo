@@ -46,14 +46,13 @@ const validateSplitAssignments = (
     (sum, entry) => sum + toNum(entry?.porsiPersen ?? entry?.percentage),
     0,
   );
-  const hasNonPositive = assignments.some(
-    (entry) => toNum(entry?.porsiPersen ?? entry?.percentage) <= 0,
+  const hasNegative = assignments.some(
+    (entry) => toNum(entry?.porsiPersen ?? entry?.percentage) < 0,
   );
-  if (hasNonPositive) {
+  if (hasNegative) {
     return {
       valid: false,
-      error:
-        "Porsi split staff wajib lebih dari 0%. Jika komisi service di-set 0, kirim porsi staff tetap > 0% (atau kosongkan staffAssignments level invoice).",
+      error: "Porsi split staff tidak boleh negatif.",
     };
   }
 
