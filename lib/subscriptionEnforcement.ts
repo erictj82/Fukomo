@@ -22,6 +22,15 @@ export interface UsageCheckResult {
     limit?: number;
 }
 
+// Kill-switch global buat SELURUH enforcement SaaS. Default OFF (mati) — cuma
+// nyala kalau SAAS_ENABLED=true di env. Selama flag ini bukan 'true', semua
+// pengecekan limit (transaksi/WA/staff) di-bypass total, jadi tenant production
+// next-salon yang belum pakai SaaS gak akan pernah keblok. Login-gate di
+// auth.config.ts pakai pengecekan env yang sama (Edge runtime, gak import ini).
+export function isSaasEnabled(): boolean {
+    return process.env.SAAS_ENABLED === 'true';
+}
+
 const ROLLING_WINDOW_DAYS = 30;
 
 // Limit "per bulan" di plan berlaku sebagai rolling 30-hari dari startDate
@@ -74,6 +83,9 @@ export async function tryConsumeUsage(
     limitType: 'transaction' | 'wa',
     amount: number = 1
 ): Promise<UsageCheckResult> {
+    // Kill-switch: SaaS mati -> jangan konsumsi kuota / jangan blok apa pun.
+    if (!isSaasEnabled()) return { allowed: true };
+
     const master = await getMasterModels();
 
     const subscription = await master.TenantSubscription.findOne({
@@ -146,6 +158,9 @@ export async function checkStaffLimit(
     storeSlug: string,
     storeId: string
 ): Promise<UsageCheckResult> {
+    // Kill-switch: SaaS mati -> jangan blok tambah staff.
+    if (!isSaasEnabled()) return { allowed: true };
+
     const master = await getMasterModels();
 
     const subscription = await master.TenantSubscription.findOne({

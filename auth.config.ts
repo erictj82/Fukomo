@@ -67,12 +67,19 @@ export const authConfig = {
                 // status null = tenant belum pernah di-assign subscription plan
                 // (misal toko lama sebelum sistem SaaS ini ada) - sengaja TIDAK
                 // diblokir, biar gak nge-lockout toko existing yang belum migrasi.
+                // Kill-switch: kalau SAAS_ENABLED != 'true', fitur SaaS mati total
+                // -> JANGAN pernah blok akses karena status langganan. Env dibaca
+                // langsung di sini (Edge runtime, gak boleh import subscriptionEnforcement
+                // yang pakai mongoose). Nilai di-inline saat build; ganti flag = rebuild.
+                const saasEnabled = process.env.SAAS_ENABLED === 'true';
                 const subscriptionStatus = (auth?.user as any)?.subscriptionStatus;
                 const subscriptionExpiresAt = (auth?.user as any)?.subscriptionExpiresAt;
                 const isSubscriptionBlocked =
-                    subscriptionStatus === 'expired' ||
-                    subscriptionStatus === 'suspended' ||
-                    (!!subscriptionExpiresAt && new Date(subscriptionExpiresAt).getTime() < Date.now());
+                    saasEnabled && (
+                        subscriptionStatus === 'expired' ||
+                        subscriptionStatus === 'suspended' ||
+                        (!!subscriptionExpiresAt && new Date(subscriptionExpiresAt).getTime() < Date.now())
+                    );
 
                 if (isSubscriptionBlocked && pageSegment !== 'subscription-expired') {
                     return Response.redirect(new URL(`/${slugSegment}/subscription-expired`, nextUrl));
