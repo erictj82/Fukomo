@@ -31,6 +31,12 @@ export const authConfig = {
                 nextUrl.pathname === '/api/register' ||
                 nextUrl.pathname === '/api/settings' ||
                 nextUrl.pathname === '/api/payments/xendit/webhook' ||
+                // Cron SaaS dipanggil terjadwal dari luar (crontab) via Bearer CRON_SECRET,
+                // bukan session NextAuth — harus di-exempt biar gak kena redirect 302.
+                // Auth aslinya = cek CRON_SECRET di handler. Sengaja cuma path INI, bukan
+                // /api/cron/* umum: sebagian cron existing gak punya guard CRON_SECRET,
+                // exempt rame-rame malah buka mereka tanpa auth.
+                nextUrl.pathname === '/api/cron/subscription-expiry' ||
                 nextUrl.pathname.startsWith('/api/auth') ||
                 nextUrl.pathname.startsWith('/api/public') ||
                 nextUrl.pathname.startsWith('/api/admin') ||
