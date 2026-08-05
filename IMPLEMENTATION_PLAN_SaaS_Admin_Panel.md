@@ -413,11 +413,12 @@ DB_PASS=<password kuat>
 
 ## 10. Risiko & Catatan
 
-- **Bootstrap admin pertama**: **Sudah terverifikasi** — `POST /admins` sengaja hanya butuh
-  `x-internal-api-key` tanpa admin existing (komentar `admins/route.ts`: "chicken-and-egg,
-  gak ada cara login ke panel PHP kalau belum ada 1 pun row PlatformAdmin"). Jadi tidak perlu
-  script seed; cukup 1 curl POST (lihat Fase 0). Validasi: `username/password/name` wajib,
-  password ≥8 char, username unik.
+- **Bootstrap admin pertama**: admin SaaS **mandiri di MySQL** (keputusan §3.4). Admin pertama
+  di-**seed saat setup MySQL (Fase 1)** — INSERT row `platform_admins` dengan `password_hash`
+  hasil `password_hash()` PHP (bcrypt/argon2). **Bukan** lewat curl `POST /admins` Mongo:
+  endpoint `/admins`/`/admins/login` + model `PlatformAdmin` Mongo resmi **deprecated**, tidak
+  dipakai panel. Validasi seed: `username` unik, `password` ≥8 char, `name` wajib, `role` diisi
+  `super_admin` untuk admin pertama.
 - **Field cache Store bisa basi**: setiap endpoint baru yang mengubah subscription HARUS ikut
   memperbarui `Store.subscriptionStatus`/`subscriptionExpiresAt`, kalau tidak `auth.config.ts`
   bakal salah menilai status login tenant.

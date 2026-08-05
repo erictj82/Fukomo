@@ -34,6 +34,12 @@ export const authConfig = {
                 nextUrl.pathname.startsWith('/api/auth') ||
                 nextUrl.pathname.startsWith('/api/public') ||
                 nextUrl.pathname.startsWith('/api/admin') ||
+                // /api/internal/* dipanggil server-to-server oleh panel SaaS (PHP) —
+                // TANPA session NextAuth, cuma bawa header x-internal-api-key. Kalau gak
+                // di-exempt di sini, middleware nge-redirect 302 ke /pusat/login sebelum
+                // sampai ke route handler. Otentikasi asli endpoint ini = requireInternalApiKey()
+                // (fail-closed 503 kalau key belum di-set, 401 kalau salah), BUKAN session.
+                nextUrl.pathname.startsWith('/api/internal') ||
                 nextUrl.pathname.startsWith('/api/customers/portal');
 
             const isPublicRoute = isPublicPage || isPublicApi;
