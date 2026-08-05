@@ -1840,13 +1840,9 @@ export default function POSPage() {
           const commissionValue = Number(bs.commissionValue || 0);
 
           if (settings.showCommissionInPOS) {
-            if (commissionType === "fixed" && commissionValue <= 0) {
-              alert(`Komisi service "${bs.serviceName}" dalam bundle "${item.name}" belum diisi. Isi Komisi Nominal lebih dari 0 terlebih dahulu di Master.`);
-              return;
-            }
-
-            if (commissionType === "percentage" && commissionValue <= 0) {
-              alert(`Komisi service "${bs.serviceName}" dalam bundle "${item.name}" belum diisi. Isi Komisi Persentase lebih dari 0 terlebih dahulu di Master.`);
+            // Komisi 0 diperbolehkan (service gratis/bundle/manual). Hanya nilai negatif yang ditolak.
+            if (commissionValue < 0) {
+              alert(`Komisi service "${bs.serviceName}" dalam bundle "${item.name}" tidak boleh negatif.`);
               return;
             }
           }
@@ -1900,16 +1896,10 @@ export default function POSPage() {
       const commissionValue = Number(item.commissionValue || 0);
 
       if (settings.showCommissionInPOS) {
-        if (commissionType === "fixed" && commissionValue <= 0) {
+        // Komisi 0 diperbolehkan (service gratis/manual). Hanya nilai negatif yang ditolak.
+        if (commissionValue < 0) {
           alert(
-            `Komisi service "${item.name}" belum diisi. Isi Komisi Nominal lebih dari 0 terlebih dahulu.`,
-          );
-          return;
-        }
-
-        if (commissionType === "percentage" && commissionValue <= 0) {
-          alert(
-            `Komisi service "${item.name}" belum diisi. Isi Komisi Persentase lebih dari 0 terlebih dahulu.`,
+            `Komisi service "${item.name}" tidak boleh negatif.`,
           );
           return;
         }
