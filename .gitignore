@@ -54,3 +54,8 @@ xendit api key.txt
 
 # project docs
 /docs
+
+# runtime user uploads (foto/promo customer dari app produksi) — artefak runtime,
+# JANGAN di-version-control. File fisik di server tetap ada, git berhenti nge-track.
+/public/uploads/*
+!/public/uploads/.gitkeep
