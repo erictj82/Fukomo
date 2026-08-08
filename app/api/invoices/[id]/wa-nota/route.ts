@@ -32,7 +32,7 @@ async function compileWaNotaData(id: string, tenantSlug: string, request: Reques
 
   const customerName = invoice.customer?.name || 'Pelanggan';
   const storeName = settings.storeName || 'Salon';
-  const storeAddress = settings.storeAddress || '';
+  const storeAddress = settings.address || '';
   const invoiceNumber = invoice.invoiceNumber;
   const dateStr = new Date(invoice.createdAt || new Date()).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).replace(/\./g, ':');
   const showStaff = settings.showStaffOnReceipt !== false;

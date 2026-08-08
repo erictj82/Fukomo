@@ -1,7 +1,7 @@
 import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission, checkPermissionWithSession } from '@/lib/rbac';
-import { getWaProviderConfigFromSettings, createBalesOtomatisTemplate, testBalesOtomatisWaba } from '@/lib/waProvider';
+import { getWaProviderConfigForPurpose, createBalesOtomatisTemplate, testBalesOtomatisWaba } from '@/lib/waProvider';
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest, props: any) {
 
         try {
             const settings = await Settings.findOne({}).lean();
-            const waConfig = getWaProviderConfigFromSettings(settings);
+            const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
             if (waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba') {
                 const { secretKey, licensesKey } = waConfig.balesotomatis;
                 const result = await testBalesOtomatisWaba(secretKey, licensesKey);
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest, props: any) {
 
         if (submitToMeta) {
             const settings = await Settings.findOne({}).lean();
-            const waConfig = getWaProviderConfigFromSettings(settings);
+            const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
             if (waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba') {
                 const { secretKey, licensesKey } = waConfig.balesotomatis;
                 const result = await createBalesOtomatisTemplate(secretKey, licensesKey, name, message);

@@ -76,6 +76,7 @@ export async function GET(request: NextRequest, props: any) {
         try {
             if (settings.balesotomatisApiKey) settings.balesotomatisApiKey = decryptFonnteToken(settings.balesotomatisApiKey);
             if (settings.balesotomatisSecretKey) settings.balesotomatisSecretKey = decryptFonnteToken(settings.balesotomatisSecretKey);
+            if (settings.balesotomatisLicensesKey) settings.balesotomatisLicensesKey = decryptFonnteToken(settings.balesotomatisLicensesKey);
         } catch (e) {
             // field lama/kosong yang belum pernah dienkripsi - biarin apa adanya, jangan sampai GET /api/settings gagal total
         }
@@ -157,6 +158,9 @@ export async function PUT(request: NextRequest, props: any) {
         if (body.balesotomatisSecretKey) {
             body.balesotomatisSecretKey = encryptFonnteToken(body.balesotomatisSecretKey);
         }
+        if (body.balesotomatisLicensesKey) {
+            body.balesotomatisLicensesKey = encryptFonnteToken(body.balesotomatisLicensesKey);
+        }
 
         if (body.birthdayVoucherId === "") {
             body.birthdayVoucherId = null;
@@ -179,6 +183,9 @@ export async function PUT(request: NextRequest, props: any) {
             }
             if (settings.balesotomatisSecretKey) {
                 settings.balesotomatisSecretKey = decryptFonnteToken(settings.balesotomatisSecretKey);
+            }
+            if (settings.balesotomatisLicensesKey) {
+                settings.balesotomatisLicensesKey = decryptFonnteToken(settings.balesotomatisLicensesKey);
             }
         } catch (e) {
             console.error('Error decrypting balesotomatis credentials in PUT:', e);
