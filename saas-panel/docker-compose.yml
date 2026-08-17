@@ -1,0 +1,30 @@
+# MySQL untuk panel SaaS (data operasional: admin/auth/audit).
+# Data bisnis SaaS tetap di MongoDB Master via internal API — JANGAN taruh di sini.
+#
+# Secrets dibaca dari docker/.env (gitignored). Jalankan dari folder saas-panel/:
+#   docker compose up -d
+# Migration 001_init.sql auto-run sekali saat volume kosong (initdb.d).
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: saas-panel-mysql
+    restart: unless-stopped
+    env_file:
+      - docker/.env
+    ports:
+      # Bind ke localhost saja — panel & mysql sehost. Jangan expose ke publik.
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - saas_panel_db:/var/lib/mysql
+      # Migration auto-load: file *.sql di initdb.d jalan alfabetis saat init pertama.
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # $$ = literal $ (hindari interpolasi compose); var dibaca dari dalam container.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  saas_panel_db:
