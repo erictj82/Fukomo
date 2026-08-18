@@ -1,21 +1,54 @@
 import type { NextAuthConfig } from "next-auth";
+import { resolveTenantFromHost } from "./lib/tenantHost";
 
 export const authConfig = {
     session: {
         strategy: "jwt",
     },
     callbacks: {
-        authorized({ auth, request: { nextUrl } }) {
+        authorized({ auth, request }) {
+            const { nextUrl } = request;
             const isLoggedIn = !!auth?.user;
+
+            // ── [SUBDOMAIN] dual-mode + kill-switch ──────────────────────────
+            // TENANT_BASE_DOMAIN unset → subdomainSlug=null → useSubdomain=false
+            // → SEMUA logika di bawah jalan persis mode path lama (byte-identik).
+            const baseDomain = process.env.TENANT_BASE_DOMAIN;
+            const subdomainSlug = resolveTenantFromHost(request.headers.get('host'), baseDomain);
+            // baseDomain bersih (tanpa port/leading dot) buat rakit origin redirect.
+            const cleanBase = (baseDomain || '').split(':')[0].trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+
             const pathParts = nextUrl.pathname.split('/').filter(Boolean);
             // pathParts[0] could be a slug like "pusat", "bintaro", or "api"
             const isApiRoute = pathParts[0] === 'api';
             const nonSlugSegments = ['api', 'admin', 'register', 'login', 'setup'];
-            const slugSegment = pathParts[0] && !nonSlugSegments.includes(pathParts[0]) ? pathParts[0] : null;
-            // The "page" part is the path after the slug, e.g. /pusat/login -> "login"
-            const pageSegment = slugSegment ? pathParts.slice(1).join('/') : pathParts.join('/');
 
-            const isRootOrRegister = nextUrl.pathname === '/' || nextUrl.pathname === '/register';
+            // Di mode subdomain, slug datang dari HOST dan path itu slug-less.
+            // API SENGAJA dikecualikan: identitas tenant utk /api/* di-resolve di
+            // proxy.ts (x-store-slug dari host) + guard tiap route; perlakuan
+            // authorized() buat API dibiarkan sama biar gak ada 302 tak terduga.
+            const useSubdomain = subdomainSlug !== null && !isApiRoute;
+            const slugSegment = useSubdomain
+                ? subdomainSlug
+                : (pathParts[0] && !nonSlugSegments.includes(pathParts[0]) ? pathParts[0] : null);
+            // The "page" part is the path after the slug, e.g. /pusat/login -> "login".
+            // Di subdomain, seluruh path ADALAH page (host yang bawa slug).
+            const pageSegment = useSubdomain
+                ? pathParts.join('/')
+                : (slugSegment ? pathParts.slice(1).join('/') : pathParts.join('/'));
+
+            // Rakit URL redirect sesuai mode:
+            //  - path mode : /{slug}/{page} di host sekarang (IDENTIK perilaku lama)
+            //  - subdomain : /{page} di host {slug}.{base} (mendukung cross-subdomain)
+            const pageUrl = (slug: string, page: string): URL =>
+                useSubdomain
+                    ? new URL(`/${page}`, `${nextUrl.protocol}//${slug}.${cleanBase}`)
+                    : new URL(`/${slug}/${page}`, nextUrl);
+
+            // Di apex (path mode) '/' & '/register' = landing publik. Di subdomain,
+            // '/' = ROOT TENANT (bukan landing) → jangan dianggap publik, biar unauth
+            // tetap dilempar ke login (mirror perilaku path-mode /{slug}).
+            const isRootOrRegister = !useSubdomain && (nextUrl.pathname === '/' || nextUrl.pathname === '/register');
 
             const isPublicPage =
                 isRootOrRegister ||
@@ -59,14 +92,14 @@ export const authConfig = {
             if (!isLoggedIn && !isPublicRoute) {
                 // Redirect to /{slug}/login if slug is known, otherwise /pusat/login
                 const loginSlug = slugSegment || 'pusat';
-                return Response.redirect(new URL(`/${loginSlug}/login`, nextUrl));
+                return Response.redirect(pageUrl(loginSlug, 'login'));
             }
 
             if (isLoggedIn && !isPublicRoute && slugSegment) {
                 const userSlug = (auth?.user as any)?.tenantSlug;
                 // Block cross-tenant access to protected pages
                 if (userSlug && slugSegment !== userSlug) {
-                    return Response.redirect(new URL(`/${userSlug}/dashboard`, nextUrl));
+                    return Response.redirect(pageUrl(userSlug, 'dashboard'));
                 }
 
                 // Subscription expiry check (blueprint section 4) — block akses walau
@@ -94,13 +127,24 @@ export const authConfig = {
                     );
 
                 if (isSubscriptionBlocked && pageSegment !== 'subscription-expired') {
-                    return Response.redirect(new URL(`/${slugSegment}/subscription-expired`, nextUrl));
+                    return Response.redirect(pageUrl(slugSegment, 'subscription-expired'));
                 }
             }
 
-            if (isLoggedIn && (isRootOrRegister || pageSegment === 'login' || pageSegment === 'register')) {
+            // Landing → dashboard kalau sudah login.
+            //  - Path mode : '/' & '/register' (isRootOrRegister) + halaman login/register.
+            //  - Subdomain : root tenant (pageSegment '' , mis. pusat.fukomo.com/) JUGA
+            //    dihitung landing. app/[slug]/page.tsx sengaja gak ada, jadi tanpa ini
+            //    user login yang buka root subdomain bakal jatuh ke 404. Di path mode
+            //    (useSubdomain=false) syarat tambahan ini mati → perilaku lama identik.
+            const isLoggedInLanding =
+                isRootOrRegister ||
+                pageSegment === 'login' ||
+                pageSegment === 'register' ||
+                (useSubdomain && pageSegment === '');
+            if (isLoggedIn && isLoggedInLanding) {
                 const userSlug = (auth?.user as any)?.tenantSlug || 'pusat';
-                return Response.redirect(new URL(`/${userSlug}/dashboard`, nextUrl));
+                return Response.redirect(pageUrl(userSlug, 'dashboard'));
             }
 
             return true;
