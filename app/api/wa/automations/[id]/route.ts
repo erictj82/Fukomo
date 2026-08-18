@@ -20,7 +20,7 @@ export async function PUT(request: NextRequest, props: any) {
 
         // BUG-08/SEC-04 FIX: Whitelist field yang boleh diupdate
         // Mencegah manipulasi field internal seperti lastRunDate, _id, createdAt
-        const { name, category, targetRole, frequency, scheduleDays, scheduleTime, daysBefore, messageTemplate, isActive } = body;
+        const { name, category, targetRole, frequency, scheduleDays, scheduleTime, daysBefore, messageTemplate, isActive, waTemplateId } = body;
         const update: Record<string, any> = {};
         if (name !== undefined) update.name = name;
         if (category !== undefined) update.category = category;
@@ -36,6 +36,9 @@ export async function PUT(request: NextRequest, props: any) {
         if (daysBefore !== undefined) update.daysBefore = daysBefore;
         if (messageTemplate !== undefined) update.messageTemplate = messageTemplate;
         if (isActive !== undefined) update.isActive = isActive;
+        // Link opsional ke WaTemplate WABA (Meta-approved) untuk kategori customer-facing.
+        // Empty string / null → unlink (kembali ke jalur Fonnte free-text). Cast ObjectId oleh Mongoose.
+        if (waTemplateId !== undefined) update.waTemplateId = waTemplateId || null;
 
         const automation = await WaAutomation.findByIdAndUpdate(id, update, { new: true });
         if (!automation) {

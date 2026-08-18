@@ -2,7 +2,7 @@
 
 
 import { useParams } from "next/navigation";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   MessageSquare,
   Send,
@@ -68,6 +68,34 @@ interface Service {
   name: string;
 }
 
+interface WaTemplateOption {
+  _id: string;
+  name: string;
+  message: string;
+  metaStatus?: "LOCAL" | "PENDING" | "APPROVED" | "REJECTED";
+  metaTemplateName?: string;
+  metaLanguage?: string;
+  metaVariables?: string[];
+}
+
+/** Ekstrak nama variabel {{...}} dari teks template, urutan kemunculan pertama, deduped.
+ *  Cermin dari extractTemplateVariables di lib/waProvider.ts — dipakai untuk render input
+ *  per-variabel kalau metaVariables kosong. */
+function extractVarNames(message: string): string[] {
+  const vars: string[] = [];
+  const seen = new Set<string>();
+  String(message || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, raw: string) => {
+    const name = String(raw).trim();
+    const key = name.toLowerCase();
+    if (name && !seen.has(key)) {
+      seen.add(key);
+      vars.push(name);
+    }
+    return _m;
+  });
+  return vars;
+}
+
 interface AutomationRule {
   _id: string;
   name: string;
@@ -78,6 +106,9 @@ interface AutomationRule {
   scheduleTime?: string;
   daysBefore?: number;
   messageTemplate: string;
+  // Opsional: link ke WaTemplate WABA (Meta-approved) untuk kategori customer-facing.
+  // Kalau ter-set & tenant WABA → scheduler kirim via Send Template, bukan Fonnte free-text.
+  waTemplateId?: string | null;
   isActive: boolean;
   lastRunDate?: string;
 }
@@ -163,6 +194,7 @@ export default function WAMarketingPage() {
     scheduleTime: "09:00",
     daysBefore: 0,
     messageTemplate: "",
+    waTemplateId: null,
     isActive: true,
   });
   const [editingAutomationId, setEditingAutomationId] = useState<string | null>(null);
@@ -182,6 +214,14 @@ export default function WAMarketingPage() {
 
   // Services dropdown
   const [services, setServices] = useState<Service[]>([]);
+
+  // WABA campaign mode (blast/promosi lewat BalesOtomatis resmi Meta)
+  const [campaignWaba, setCampaignWaba] = useState<boolean | null>(null);
+  const [approvedTemplates, setApprovedTemplates] = useState<WaTemplateOption[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState<WaTemplateOption | null>(null);
+  const [templateValues, setTemplateValues] = useState<Record<string, string>>({});
 
   /* ────── Load services ────── */
   useEffect(() => {
@@ -204,12 +244,67 @@ export default function WAMarketingPage() {
         if (!d.fonnteToken) setFonnteStatus('unconfigured');
         else setFonnteStatus('ok');
         setHasOwnerPhone(!!(d.waOwnerNumber));
+        // Campaign/blast dipaksa lewat WABA resmi Meta kalau hybrid aktif,
+        // atau provider utama balesotomatis dalam mode waba.
+        const waba =
+          d.waHybridMode === true ||
+          (d.waProvider === 'balesotomatis' && d.balesotomatisMode === 'waba');
+        setCampaignWaba(waba);
       })
       .catch(() => {
         setFonnteStatus('error');
         setHasOwnerPhone(null);
       });
   }, [slug]);
+
+  /* ────── Ambil template WABA yang sudah DISETUJUI Meta (mode WABA aja) ────── */
+  useEffect(() => {
+    if (campaignWaba !== true) return;
+    setTemplatesLoading(true);
+    fetch("/api/wa/templates?type=follow_up", { headers: { "x-store-slug": slug } })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          setApprovedTemplates(
+            (d.data || []).filter((t: WaTemplateOption) => t.metaStatus === "APPROVED")
+          );
+        }
+      })
+      .catch(console.error)
+      .finally(() => setTemplatesLoading(false));
+  }, [campaignWaba, slug]);
+
+  const handleTemplateSelect = (id: string) => {
+    setSelectedTemplateId(id);
+    const tpl = approvedTemplates.find((t) => t._id === id) || null;
+    setSelectedTemplate(tpl);
+    if (tpl) {
+      const vars =
+        tpl.metaVariables && tpl.metaVariables.length > 0
+          ? tpl.metaVariables
+          : extractVarNames(tpl.message || "");
+      const init: Record<string, string> = {};
+      vars.forEach((v) => {
+        init[v] = "";
+      });
+      setTemplateValues(init);
+    } else {
+      setTemplateValues({});
+    }
+  };
+
+  // Variabel template yang akan dirender sebagai input nilai
+  const templateVars = useMemo(() => {
+    if (!selectedTemplate) return [];
+    if (selectedTemplate.metaVariables && selectedTemplate.metaVariables.length > 0)
+      return selectedTemplate.metaVariables;
+    return extractVarNames(selectedTemplate.message || "");
+  }, [selectedTemplate]);
+
+  // Variabel mirip nama customer → di-backend otomatis terisi nama penerima,
+  // biar UI kasih tau user kalau input itu opsional.
+  const isNameLikeVar = (v: string) =>
+    ["nama_customer", "customername", "customer_name", "nama"].includes(v.toLowerCase());
 
   /* ────── Fetch targets ────── */
   const fetchTargets = useCallback(async () => {
@@ -305,8 +400,33 @@ export default function WAMarketingPage() {
 
   /* ────── Send blast ────── */
   const handleBlast = async () => {
-    if (!message.trim()) return alert("Pesan tidak boleh kosong");
     if (selectedIds.size === 0) return alert("Pilih minimal 1 customer");
+
+    // Mode WABA: wajib pakai template approved, bukan free-text.
+    if (campaignWaba === true) {
+      if (!selectedTemplateId || !selectedTemplate) {
+        return alert("Pilih template yang sudah disetujui Meta untuk blast WABA");
+      }
+      const missing = templateVars.filter(
+        (v) => !isNameLikeVar(v) && !(templateValues[v] || "").trim()
+      );
+      if (missing.length > 0) {
+        return alert(`Lengkapi nilai variabel: ${missing.join(", ")}`);
+      }
+    } else if (!message.trim()) {
+      return alert("Pesan tidak boleh kosong");
+    }
+
+    // Backend selalu butuh `message` non-kosong (schema required). Di mode WABA,
+    // isi teks template dipakai sebagai catatan pesan; pengiriman aktual via Send Template.
+    const effectiveMessage =
+      campaignWaba === true && selectedTemplate
+        ? selectedTemplate.message || selectedTemplate.name
+        : message;
+    const templatePayload =
+      campaignWaba === true && selectedTemplateId
+        ? { templateId: selectedTemplateId, templateValues }
+        : {};
 
     if (sendMode === "schedule") {
       if (!scheduledAt) return alert("Pilih tanggal & waktu jadwal");
@@ -323,10 +443,11 @@ export default function WAMarketingPage() {
           headers: { "x-store-slug": slug, "Content-Type": "application/json" },
           body: JSON.stringify({
             customerIds: Array.from(selectedIds),
-            message,
+            message: effectiveMessage,
             scheduledAt: scheduleDate.toISOString(),
             campaignName: campaignName || `Campaign ${new Date().toLocaleDateString("id-ID")}`,
             filters: { lastVisitSince, serviceId, membershipTier, birthdayMonth },
+            ...templatePayload,
           }),
         });
         const data = await res.json();
@@ -335,6 +456,9 @@ export default function WAMarketingPage() {
           setCampaignName("");
           setMessage("");
           setScheduledAt("");
+          setSelectedTemplateId("");
+          setSelectedTemplate(null);
+          setTemplateValues({});
         } else {
           alert(data.error || "Failed to schedule campaign");
         }
@@ -362,11 +486,12 @@ export default function WAMarketingPage() {
         headers: { "x-store-slug": slug, "Content-Type": "application/json" },
         body: JSON.stringify({
           customerIds: Array.from(selectedIds),
-          message,
+          message: effectiveMessage,
           campaignName:
             campaignName ||
             `Blast ${new Date().toLocaleDateString("id-ID")}`,
           filters: { lastVisitSince, serviceId, membershipTier, birthdayMonth },
+          ...templatePayload,
         }),
       });
       const data = await res.json();
@@ -1110,7 +1235,7 @@ export default function WAMarketingPage() {
                     setEditingAutomationId(null);
                     setAutoForm({
                       name: "", category: "daily_report", targetRole: "owner", frequency: "daily",
-                      scheduleDays: [], scheduleTime: "09:00", daysBefore: 0, messageTemplate: "", isActive: true
+                      scheduleDays: [], scheduleTime: "09:00", daysBefore: 0, messageTemplate: "", waTemplateId: null, isActive: true
                     });
                   } else {
                     setShowAddAutomation(true);
@@ -1301,6 +1426,65 @@ export default function WAMarketingPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 resize-none"
                   />
                 </div>
+
+                {/* ────── Link template WABA (Meta-approved) — kategori customer-facing, mode WABA ────── */}
+                {campaignWaba === true &&
+                  (autoForm.category === "membership_expiry" ||
+                    autoForm.category === "package_expiry" ||
+                    autoForm.category === "birthday") && (
+                    <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                      <label className="text-xs font-semibold text-emerald-900 mb-1 flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        Template WABA (disetujui Meta) — opsional
+                      </label>
+                      <p className="text-[10px] text-emerald-700 mb-2 leading-relaxed">
+                        Pesan pengingat/ultah hampir selalu di luar window 24 jam, jadi harus pakai template resmi.
+                        Kalau dipilih, aturan ini mengirim via <strong>Send Template</strong> WABA — variabel diisi otomatis dari data pelanggan.
+                        Kosongkan untuk tetap pakai pesan free-text (Fonnte) di atas.
+                      </p>
+                      {templatesLoading ? (
+                        <div className="text-xs text-emerald-700 flex items-center gap-1.5">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Memuat template…
+                        </div>
+                      ) : approvedTemplates.length === 0 ? (
+                        <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                          Belum ada template yang disetujui Meta. Submit template di tab <strong>Template WhatsApp</strong> lalu tunggu status <strong>APPROVED</strong> dulu.
+                        </div>
+                      ) : (
+                        <>
+                          <select
+                            value={autoForm.waTemplateId || ""}
+                            onChange={(e) =>
+                              setAutoForm({ ...autoForm, waTemplateId: e.target.value || null })
+                            }
+                            className="w-full px-3 py-2 border border-emerald-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 bg-white"
+                          >
+                            <option value="">— Tanpa template (pakai free-text Fonnte) —</option>
+                            {approvedTemplates.map((t) => (
+                              <option key={t._id} value={t._id}>
+                                {t.name}
+                                {t.metaTemplateName ? ` (${t.metaTemplateName})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {(() => {
+                            const sel = approvedTemplates.find((t) => t._id === autoForm.waTemplateId);
+                            if (!sel) return null;
+                            const vars =
+                              sel.metaVariables && sel.metaVariables.length > 0
+                                ? sel.metaVariables
+                                : extractVarNames(sel.message || "");
+                            if (vars.length === 0) return null;
+                            return (
+                              <p className="text-[10px] text-emerald-700 mt-1.5">
+                                Variabel template: {vars.map((v) => `{{${v}}}`).join(", ")} — diisi otomatis saat kirim.
+                              </p>
+                            );
+                          })()}
+                        </>
+                      )}
+                    </div>
+                  )}
                 {(autoForm.category === 'daily_report' || autoForm.category === 'stock_alert') &&
                  autoForm.targetRole === 'owner' &&
                  hasOwnerPhone === false && (
@@ -1326,7 +1510,7 @@ export default function WAMarketingPage() {
                         if (res.ok) {
                           setShowAddAutomation(false);
                           setEditingAutomationId(null);
-                          setAutoForm({ name: "", category: "daily_report", targetRole: "owner", frequency: "daily", scheduleDays: [], scheduleTime: "09:00", daysBefore: 0, messageTemplate: "", isActive: true });
+                          setAutoForm({ name: "", category: "daily_report", targetRole: "owner", frequency: "daily", scheduleDays: [], scheduleTime: "09:00", daysBefore: 0, messageTemplate: "", waTemplateId: null, isActive: true });
                           fetchAutomations();
                         } else {
                           const errData = await res.json().catch(() => ({}));

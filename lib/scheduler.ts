@@ -2,7 +2,7 @@ import { decryptFonnteToken } from '@/lib/encryption';
 import { getMasterModels } from './masterDb';
 import { getTenantModels } from './tenantDb';
 import { sendWhatsApp } from '@/lib/fonnte';
-import { getWaProviderConfigForPurpose } from '@/lib/waProvider';
+import { getWaProviderConfigForPurpose, sendTemplateViaBalesOtomatis, getBalesOtomatisTemplateId, buildTemplateParameters, extractTemplateVariables, type BalesOtomatisWabaConfig } from '@/lib/waProvider';
 import { addMessageVariation } from '@/lib/messageVariation';
 import { validateMessageContent } from '@/lib/messageValidator';
 // cronDedup removed — atomic lock via lastRunDate is sufficient
@@ -236,6 +236,53 @@ export async function processPendingCampaigns(now: Date = new Date()) {
             const customers = await Customer.find({ _id: { $in: customerIds } }).select('name').lean();
             const customerMap = new Map(customers.map((c: any) => [String(c._id), c.name]));
 
+            // WABA TEMPLATE MODE: campaign yang bawa waTemplateName dikirim via Send Template
+            // (/send_message_template) pakai template pre-approved Meta — WAJIB untuk blast promo
+            // di luar window 24 jam. Hanya aktif kalau config campaign resolve ke BalesOtomatis WABA;
+            // kalau engga (Fonnte / unofficial) jatuh ke jalur free-text lama supaya tetap kompatibel.
+            const wabaConfig =
+                waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba'
+                    ? waConfig.balesotomatis
+                    : null;
+            const useTemplate = Boolean(campaign.waTemplateName) && Boolean(wabaConfig);
+            const templateVars: string[] =
+                (Array.isArray(campaign.waTemplateVariables) && campaign.waTemplateVariables.length > 0)
+                    ? campaign.waTemplateVariables
+                    : extractTemplateVariables(campaign.message);
+            const templateValues: Record<string, string> = campaign.waTemplateValues
+                ? Object.fromEntries(Object.entries(campaign.waTemplateValues).map(([k, v]) => [k.toLowerCase(), String(v)]))
+                : {};
+
+            // Resolusi ID NUMERIK Meta SEKALI per campaign (bukan per-penerima):
+            // /send_message_template minta field `template` = ID numerik, BUKAN nama
+            // (kirim nama ditolak "Template not found"). Kalau gagal resolve (template
+            // dihapus di dashboard / belum APPROVED) → tandai campaign + target pending
+            // failed dgn pesan jelas, lalu skip campaign ini (jangan loop retry senyap).
+            let resolvedTemplateId: string | null = null;
+            if (useTemplate && wabaConfig) {
+                resolvedTemplateId = await getBalesOtomatisTemplateId(
+                    wabaConfig.secretKey,
+                    wabaConfig.licensesKey,
+                    campaign.waTemplateName
+                );
+                if (!resolvedTemplateId) {
+                    const errMsg = `Template WABA "${campaign.waTemplateName}" tidak ditemukan / belum APPROVED di BalesOtomatis. Cek status atau daftarkan ulang di menu Template WhatsApp.`;
+                    console.error(`[CAMPAIGN:${slug}] ${errMsg} — campaign ${campaign._id} ditandai failed.`);
+                    await WaCampaignQueue.updateOne(
+                        { _id: campaign._id },
+                        {
+                            $set: {
+                                status: 'failed',
+                                'targets.$[t].status': 'failed',
+                                'targets.$[t].error': errMsg,
+                            },
+                        },
+                        { arrayFilters: [{ 't.status': 'pending' }] }
+                    );
+                    continue;
+                }
+            }
+
             let consecutiveErrors = 0;
             let loopSent = 0;
 
@@ -248,27 +295,47 @@ export async function processPendingCampaigns(now: Date = new Date()) {
                 const campaignDateStr = new Intl.DateTimeFormat('id-ID', {
                     timeZone: 'Asia/Jakarta', dateStyle: 'long'
                 }).format(now);
-                let personalizedMsg = campaign.message
-                    .replace(/{{nama_customer}}|{{customerName}}/gi, customerName)
-                    .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
-                    .replace(/{{date}}/gi, campaignDateStr);
-
-                // Add message variation to avoid identical-content spam detection
-                personalizedMsg = addMessageVariation(personalizedMsg);
-
-                // BUG-10 FIX: Validasi konten pesan sebelum kirim
-                const validation = validateMessageContent(personalizedMsg);
-                if (!validation.safe) {
-                    console.warn(`[CAMPAIGN:${slug}] Message flagged: ${validation.warnings.join(', ')}`);
-                }
 
                 try {
-                    const result = await sendWhatsApp(target.phone, personalizedMsg, waConfig);
+                    let result;
+                    if (useTemplate && wabaConfig && resolvedTemplateId) {
+                        // Personalisasi parameter per penerima, urut sesuai variabel template.
+                        const parameters = buildTemplateParameters(templateVars, templateValues, {
+                            customerName,
+                            storeName: settings.storeName || 'Salon',
+                            date: campaignDateStr,
+                        });
+                        result = await sendTemplateViaBalesOtomatis(
+                            wabaConfig,
+                            target.phone,
+                            resolvedTemplateId,
+                            campaign.waTemplateLanguage || 'id',
+                            parameters
+                        );
+                    } else {
+                        // Jalur free-text lama (Fonnte / unofficial).
+                        let personalizedMsg = campaign.message
+                            .replace(/{{nama_customer}}|{{customerName}}/gi, customerName)
+                            .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
+                            .replace(/{{date}}/gi, campaignDateStr);
+
+                        // Add message variation to avoid identical-content spam detection
+                        personalizedMsg = addMessageVariation(personalizedMsg);
+
+                        // BUG-10 FIX: Validasi konten pesan sebelum kirim
+                        const validation = validateMessageContent(personalizedMsg);
+                        if (!validation.safe) {
+                            console.warn(`[CAMPAIGN:${slug}] Message flagged: ${validation.warnings.join(', ')}`);
+                        }
+
+                        result = await sendWhatsApp(target.phone, personalizedMsg, waConfig);
+                    }
+
                     if (result.success) {
                         target.status = 'sent';
                         consecutiveErrors = 0; // reset
                         loopSent++;
-                        console.log(`[CAMPAIGN:${slug}] ✅ Sent to ${target.phone}`);
+                        console.log(`[CAMPAIGN:${slug}] ✅ Sent to ${target.phone}${useTemplate ? ' (template)' : ''}`);
                     } else {
                         target.status = 'failed';
                         target.error = result.error;
@@ -338,10 +405,63 @@ export async function processPendingCampaigns(now: Date = new Date()) {
     }
 }
 
+/**
+ * Kirim satu pesan automation via WABA Send Template (template Meta-approved).
+ * Dipakai kategori customer-facing (membership_expiry / package_expiry / birthday)
+ * saat tenant WABA DAN rule punya template ter-link (rule.waTemplateId).
+ *
+ * Resolusi ID NUMERIK Meta di-cache per-tick lewat `templateIdCache` — banyak
+ * customer share satu template rule, jadi /get-template-list cukup dihit sekali.
+ * `values` menyuplai nilai per variabel (key WAJIB lowercase); apapun nama variabel
+ * di template (mis. {{nama_customer}}, {{membershipTier}}, {{daysLeft}}) ke-fill dari
+ * sini, sisanya fallback ke `ctx` (nama_customer/storeName) via buildTemplateParameters.
+ * Balikin { ok, error } — TIDAK fallback ke Fonnte (konsisten dgn follow-up murni WABA).
+ */
+async function sendAutomationViaWaba(
+    wabaConfig: BalesOtomatisWabaConfig,
+    template: any,
+    phone: string,
+    values: Record<string, string>,
+    ctx: { customerName?: string; storeName?: string; date?: string; serviceName?: string },
+    templateIdCache: Map<string, string | null>
+): Promise<{ ok: boolean; error?: string }> {
+    const metaName = String(template?.metaTemplateName || template?.name || '').trim();
+    if (!metaName) {
+        return { ok: false, error: 'Template WABA belum punya nama Meta (metaTemplateName kosong). Daftarkan & approve di menu Template WhatsApp.' };
+    }
+
+    let resolvedTemplateId: string | null;
+    if (templateIdCache.has(metaName)) {
+        resolvedTemplateId = templateIdCache.get(metaName) ?? null;
+    } else {
+        resolvedTemplateId = await getBalesOtomatisTemplateId(wabaConfig.secretKey, wabaConfig.licensesKey, metaName);
+        templateIdCache.set(metaName, resolvedTemplateId);
+    }
+
+    if (!resolvedTemplateId) {
+        return { ok: false, error: `Template WABA "${metaName}" belum APPROVED / tidak ditemukan di BalesOtomatis (status lokal: ${template?.metaStatus || 'LOCAL'}).` };
+    }
+
+    const templateVars: string[] =
+        (Array.isArray(template.metaVariables) && template.metaVariables.length > 0)
+            ? template.metaVariables
+            : extractTemplateVariables(template.message || '');
+    const parameters = buildTemplateParameters(templateVars, values, ctx);
+    const result = await sendTemplateViaBalesOtomatis(
+        wabaConfig,
+        phone,
+        resolvedTemplateId,
+        template.metaLanguage || 'id',
+        parameters
+    );
+    return { ok: !!result.success, error: result.success ? undefined : result.error };
+}
+
 export async function processAutomations(now: Date = new Date(), targetSlug?: string) {
     const slugs = targetSlug ? [targetSlug] : await getAllTenantSlugs();
 
     const todayStr = now.toLocaleDateString('en-US', { timeZone: DEFAULT_SCHEDULER_TIMEZONE });
+
 
     // FLOW-09 FIX (B-04): Time Window tidak lagi berbasis 60-min window substring match.
     // Mengecek apakah tzNow >= ruleTime. Waktu eksekusi telat tidak masalah karena ada lastRunDate.
@@ -350,7 +470,8 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
         try {
             const models = await getTenantModels(slug);
             const { WaAutomation, Settings, Customer, Product, Invoice, CustomerPackage } = models;
-            const activeRules = await WaAutomation.find({ isActive: true });
+            const activeRules = await WaAutomation.find({ isActive: true })
+                .populate('waTemplateId', 'name message metaTemplateName metaLanguage metaVariables metaStatus');
             const settings: any = await Settings.findOne() || {};
 
             // === OPERATIONAL HOURS CHECK REMOVED ===
@@ -358,6 +479,18 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
             
 
             const waConfig = getWaProviderConfigForPurpose(settings, 'notification');
+
+            // Kandidat WABA untuk reminder/ultah (customer-facing). Deteksi sama persis
+            // dgn follow-up: purpose 'campaign' → WABA saat hybrid ON, atau provider tunggal
+            // balesotomatis-waba saat hybrid OFF. Kalau bukan WABA → null (tenant Fonnte).
+            const wabaCandidate = getWaProviderConfigForPurpose(settings, 'campaign');
+            const wabaConfig: BalesOtomatisWabaConfig | null =
+                wabaCandidate.provider === 'balesotomatis' && wabaCandidate.balesotomatis?.mode === 'waba'
+                    ? wabaCandidate.balesotomatis
+                    : null;
+            const storeName = settings.storeName || 'Salon';
+            // Cache resolusi ID NUMERIK Meta per-tick per-tenant (dipakai lintas rule/customer).
+            const templateIdCache = new Map<string, string | null>();
 
             for (const rule of activeRules) {
                 // Check if rule already ran today (in memory first)
@@ -544,14 +677,29 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
                         });
 
                         let memberSentCount = 0;
+                        const memberTemplate: any = (rule as any).waTemplateId || null;
+                        const memberUseWaba = Boolean(wabaConfig) && Boolean(memberTemplate);
                         for (const customer of customers) {
-                            const msg = rule.messageTemplate
-                                .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
-                                .replace(/{{membershipTier}}/gi, customer.membershipTier || '')
-                                .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
-                                .replace(/{{daysLeft}}/gi, String(daysBefore))
-                                .replace(/{{expiryDate}}/gi, customer.membershipExpiry ? new Date(customer.membershipExpiry).toLocaleDateString('id-ID') : '');
-                            const result = await sendWhatsApp(customer.phone, msg, waConfig);
+                            const expiryDateStr = customer.membershipExpiry ? new Date(customer.membershipExpiry).toLocaleDateString('id-ID') : '';
+                            let result: { success: boolean; error?: string };
+                            if (memberUseWaba) {
+                                const r = await sendAutomationViaWaba(wabaConfig!, memberTemplate, customer.phone, {
+                                    nama_customer: customer.name, customername: customer.name, customer_name: customer.name, nama: customer.name,
+                                    membershiptier: customer.membershipTier || '',
+                                    storename: storeName, store_name: storeName, nama_toko: storeName, toko: storeName, salon: storeName,
+                                    daysleft: String(daysBefore),
+                                    expirydate: expiryDateStr,
+                                }, { customerName: customer.name, storeName, date: expiryDateStr }, templateIdCache);
+                                result = { success: r.ok, error: r.error };
+                            } else {
+                                const msg = rule.messageTemplate
+                                    .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
+                                    .replace(/{{membershipTier}}/gi, customer.membershipTier || '')
+                                    .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
+                                    .replace(/{{daysLeft}}/gi, String(daysBefore))
+                                    .replace(/{{expiryDate}}/gi, expiryDateStr);
+                                result = await sendWhatsApp(customer.phone, msg, waConfig);
+                            }
                             if (result.success) {
                                 memberSentCount++;
                             } else {
@@ -586,19 +734,36 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
 
                         let pkgSentCount = 0;
                         let pkgTotal = 0;
+                        const pkgTemplate: any = (rule as any).waTemplateId || null;
+                        const pkgUseWaba = Boolean(wabaConfig) && Boolean(pkgTemplate);
                         for (const pkg of expiringPackages) {
                             const customer: any = pkg.customer;
                             if (!customer || !customer.phone || !customer.waNotifEnabled) continue;
                             pkgTotal++;
 
-                            const msg = rule.messageTemplate
-                                .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
-                                .replace(/{{packageName}}/gi, pkg.packageSnapshot?.name || 'Paket')
-                                .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
-                                .replace(/{{daysLeft}}/gi, String(daysBefore))
-                                .replace(/{{expiryDate}}/gi, pkg.expiresAt ? new Date(pkg.expiresAt).toLocaleDateString('id-ID') : '')
-                                .replace(/{{remainingQuota}}/gi, String(pkg.remainingCount || 0));
-                            const result = await sendWhatsApp(customer.phone, msg, waConfig);
+                            const packageName = pkg.packageSnapshot?.name || 'Paket';
+                            const expiryDateStr = pkg.expiresAt ? new Date(pkg.expiresAt).toLocaleDateString('id-ID') : '';
+                            let result: { success: boolean; error?: string };
+                            if (pkgUseWaba) {
+                                const r = await sendAutomationViaWaba(wabaConfig!, pkgTemplate, customer.phone, {
+                                    nama_customer: customer.name, customername: customer.name, customer_name: customer.name, nama: customer.name,
+                                    packagename: packageName,
+                                    storename: storeName, store_name: storeName, nama_toko: storeName, toko: storeName, salon: storeName,
+                                    daysleft: String(daysBefore),
+                                    expirydate: expiryDateStr,
+                                    remainingquota: String(pkg.remainingCount || 0),
+                                }, { customerName: customer.name, storeName, date: expiryDateStr }, templateIdCache);
+                                result = { success: r.ok, error: r.error };
+                            } else {
+                                const msg = rule.messageTemplate
+                                    .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
+                                    .replace(/{{packageName}}/gi, packageName)
+                                    .replace(/{{storeName}}/gi, settings.storeName || 'Salon')
+                                    .replace(/{{daysLeft}}/gi, String(daysBefore))
+                                    .replace(/{{expiryDate}}/gi, expiryDateStr)
+                                    .replace(/{{remainingQuota}}/gi, String(pkg.remainingCount || 0));
+                                result = await sendWhatsApp(customer.phone, msg, waConfig);
+                            }
                             if (result.success) {
                                 pkgSentCount++;
                             } else {
@@ -630,12 +795,23 @@ export async function processAutomations(now: Date = new Date(), targetSlug?: st
                         }).lean();
 
                         let bdaySentCount = 0;
+                        const bdayTemplate: any = (rule as any).waTemplateId || null;
+                        const bdayUseWaba = Boolean(wabaConfig) && Boolean(bdayTemplate);
                         for (const customer of birthdayCustomers) {
-                            // BUG-06 FIX: Replace semua variabel termasuk storeName
-                            const msg = rule.messageTemplate
-                                .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
-                                .replace(/{{storeName}}/gi, settings.storeName || 'Salon');
-                            const result = await sendWhatsApp(customer.phone, msg, waConfig);
+                            let result: { success: boolean; error?: string };
+                            if (bdayUseWaba) {
+                                const r = await sendAutomationViaWaba(wabaConfig!, bdayTemplate, customer.phone, {
+                                    nama_customer: customer.name, customername: customer.name, customer_name: customer.name, nama: customer.name,
+                                    storename: storeName, store_name: storeName, nama_toko: storeName, toko: storeName, salon: storeName,
+                                }, { customerName: customer.name, storeName }, templateIdCache);
+                                result = { success: r.ok, error: r.error };
+                            } else {
+                                // BUG-06 FIX: Replace semua variabel termasuk storeName
+                                const msg = rule.messageTemplate
+                                    .replace(/{{nama_customer}}|{{customerName}}/gi, customer.name)
+                                    .replace(/{{storeName}}/gi, settings.storeName || 'Salon');
+                                result = await sendWhatsApp(customer.phone, msg, waConfig);
+                            }
                             if (result.success) {
                                 bdaySentCount++;
                             } else {
@@ -681,7 +857,26 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
             const models = await getTenantModels(slug);
             const { WaSchedule } = models;
             const followUpSettings: any = await models.Settings.findOne() || {};
-            const followUpConfig = getWaProviderConfigForPurpose(followUpSettings, 'notification');
+
+            // FOLLOW-UP MIGRASI KE WABA (permintaan klien): kalau tenant punya BalesOtomatis
+            // WABA terkonfigurasi, follow-up dikirim via Send Template (template pre-approved
+            // Meta), BUKAN free-text — karena follow-up hampir selalu jatuh di luar window
+            // 24 jam sehingga free-text pasti ditolak. Deteksi via purpose 'campaign' (selalu
+            // route ke WABA saat hybrid ON, atau provider tunggal balesotomatis-waba saat
+            // hybrid OFF). Kalau bukan WABA → tenant non-WABA → tetap jalur free-text Fonnte
+            // (backward compat, jangan merusak tenant lain yang cuma pakai Fonnte).
+            const wabaCandidate = getWaProviderConfigForPurpose(followUpSettings, 'campaign');
+            const wabaConfig =
+                wabaCandidate.provider === 'balesotomatis' && wabaCandidate.balesotomatis?.mode === 'waba'
+                    ? wabaCandidate.balesotomatis
+                    : null;
+            const fallbackConfig = getWaProviderConfigForPurpose(followUpSettings, 'notification');
+            const storeName = followUpSettings.storeName || 'Salon';
+
+            // Cache resolusi ID NUMERIK Meta per-tick per-tenant: banyak schedule bisa share
+            // template yang sama, jadi jangan hammer /get-template-list. Hasil null juga
+            // di-cache supaya template yang gagal resolve gak dihit API berulang tick ini.
+            const templateIdCache = new Map<string, string | null>();
 
             const pendingSchedules = await WaSchedule.find({
                 scheduledAt: { $lte: now },
@@ -696,7 +891,7 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
                     { new: true }
                 )
                     .populate('customerId', 'name')
-                    .populate('templateId', 'name message')
+                    .populate('templateId', 'name message metaTemplateName metaLanguage metaVariables metaStatus')
                     .populate({
                         path: 'transactionId',
                         select: 'items',
@@ -707,9 +902,10 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
                 totalCount += 1;
                 try {
                     const template: any = schedule.templateId;
-                    if (!template?.message) {
-                        console.error(`[WaSchedule] Schedule ${schedule._id} failed: template tidak ditemukan atau message kosong (templateId: ${schedule.templateId})`);
-                        await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed' });
+                    if (!template) {
+                        const errMsg = `Template tidak ditemukan (templateId: ${schedule.templateId})`;
+                        console.error(`[WaSchedule:${slug}] Schedule ${schedule._id} failed: ${errMsg}`);
+                        await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed', error: errMsg });
                         totalFailed += 1;
                         continue;
                     }
@@ -721,13 +917,82 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
                         .map((item: any) => String(item?.name || '').trim())
                         .filter(Boolean);
                     const selectedServiceName = String((schedule as any).serviceName || '').trim();
+                    const customerName = String(customer?.name || 'Pelanggan');
+                    const serviceName = selectedServiceName || (serviceNames.length > 0 ? serviceNames.join(', ') : 'Layanan');
+                    const followUpDateStr = new Intl.DateTimeFormat('id-ID', {
+                        timeZone: 'Asia/Jakarta', dateStyle: 'long',
+                    }).format(now);
 
-                    const message = fillTemplate(template.message, {
-                        nama_customer: String(customer?.name || 'Pelanggan'),
-                        nama_service: selectedServiceName || (serviceNames.length > 0 ? serviceNames.join(', ') : 'Layanan'),
-                    });
+                    let result;
+                    if (wabaConfig) {
+                        // ---- JALUR WABA: Send Template (pre-approved Meta) ----
+                        const metaName = String(template.metaTemplateName || template.name || '').trim();
+                        if (!metaName) {
+                            const errMsg = 'Template WABA belum punya nama Meta (metaTemplateName kosong). Daftarkan & approve template di menu Template WhatsApp.';
+                            console.error(`[WaSchedule:${slug}] Schedule ${schedule._id} failed: ${errMsg}`);
+                            await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed', error: errMsg });
+                            totalFailed += 1;
+                            continue;
+                        }
 
-                    const result = await sendWhatsApp(schedule.phoneNumber, message, followUpConfig);
+                        // Resolusi ID numerik Meta (cached per-tick). /send_message_template minta
+                        // field `template` = ID numerik, BUKAN nama. Kalau gagal resolve (belum
+                        // APPROVED / dihapus di dashboard) → tandai failed dgn pesan jelas. JANGAN
+                        // fallback ke Fonnte free-text: klien minta follow-up murni WABA.
+                        let resolvedTemplateId: string | null;
+                        if (templateIdCache.has(metaName)) {
+                            resolvedTemplateId = templateIdCache.get(metaName) ?? null;
+                        } else {
+                            resolvedTemplateId = await getBalesOtomatisTemplateId(
+                                wabaConfig.secretKey,
+                                wabaConfig.licensesKey,
+                                metaName
+                            );
+                            templateIdCache.set(metaName, resolvedTemplateId);
+                        }
+
+                        if (!resolvedTemplateId) {
+                            const errMsg = `Template WABA "${metaName}" belum APPROVED / tidak ditemukan di BalesOtomatis (status lokal: ${template.metaStatus || 'LOCAL'}). Cek & daftarkan/approve di menu Template WhatsApp.`;
+                            console.error(`[WaSchedule:${slug}] Schedule ${schedule._id} failed: ${errMsg}`);
+                            await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed', error: errMsg });
+                            totalFailed += 1;
+                            continue;
+                        }
+
+                        const templateVars: string[] =
+                            (Array.isArray(template.metaVariables) && template.metaVariables.length > 0)
+                                ? template.metaVariables
+                                : extractTemplateVariables(template.message || '');
+                        // Follow-up gak punya nilai eksplisit (beda dgn campaign yg diisi user di UI),
+                        // jadi values kosong → buildTemplateParameters fallback ke token by-nama.
+                        const parameters = buildTemplateParameters(templateVars, {}, {
+                            customerName,
+                            storeName,
+                            date: followUpDateStr,
+                            serviceName,
+                        });
+                        result = await sendTemplateViaBalesOtomatis(
+                            wabaConfig,
+                            schedule.phoneNumber,
+                            resolvedTemplateId,
+                            template.metaLanguage || 'id',
+                            parameters
+                        );
+                    } else {
+                        // ---- JALUR FALLBACK: free-text Fonnte (tenant non-WABA, backward compat) ----
+                        if (!template.message) {
+                            const errMsg = `Template message kosong (templateId: ${schedule.templateId})`;
+                            console.error(`[WaSchedule:${slug}] Schedule ${schedule._id} failed: ${errMsg}`);
+                            await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed', error: errMsg });
+                            totalFailed += 1;
+                            continue;
+                        }
+                        const message = fillTemplate(template.message, {
+                            nama_customer: customerName,
+                            nama_service: serviceName,
+                        });
+                        result = await sendWhatsApp(schedule.phoneNumber, message, fallbackConfig);
+                    }
 
                     if (result.success) {
                         await WaSchedule.findByIdAndUpdate(schedule._id, {
@@ -735,15 +1000,22 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
                             sentAt: new Date(),
                         });
                         totalSent += 1;
+                        console.log(`[WaSchedule:${slug}] ✅ Sent to ${schedule.phoneNumber}${wabaConfig ? ' (WABA template)' : ' (Fonnte)'}`);
                     } else {
                         await WaSchedule.findByIdAndUpdate(schedule._id, {
                             status: 'failed',
+                            error: result.error || 'Gagal mengirim (unknown)',
                         });
                         totalFailed += 1;
+                        console.log(`[WaSchedule:${slug}] ❌ Failed to send to ${schedule.phoneNumber}: ${result.error}`);
                     }
-                } catch (error) {
-                    await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed' });
+                } catch (error: any) {
+                    await WaSchedule.findByIdAndUpdate(schedule._id, {
+                        status: 'failed',
+                        error: error?.message || 'Exception saat pengiriman follow-up',
+                    });
                     totalFailed += 1;
+                    console.error(`[WaSchedule:${slug}] ❌ Error sending schedule ${schedule._id}: ${error?.message}`);
                 }
             }
         } catch (e) {

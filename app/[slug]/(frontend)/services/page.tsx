@@ -74,6 +74,16 @@ interface WaTemplate {
   _id: string;
   name: string;
   metaStatus?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
+  metaCategory?: string;
+}
+
+// Label opsi dropdown template follow-up. Tenant WABA-mode sudah difilter APPROVED di server
+// (assignable=1), jadi di sini tinggal kasih emoji status + kategori (UTILITY/MARKETING).
+function waTemplateOptionLabel(t: WaTemplate): string {
+  const cat = t.metaCategory ? ` · ${t.metaCategory}` : "";
+  if (t.metaStatus === "APPROVED") return `🟢 ${t.name}${cat}`;
+  if (t.metaStatus === "PENDING") return `🟡 ${t.name} [Pending Review]`;
+  return t.name;
 }
 
 interface ServiceBundleItem {
@@ -110,6 +120,7 @@ export default function ServicesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [waTemplates, setWaTemplates] = useState<WaTemplate[]>([]);
+  const [waIsWaba, setWaIsWaba] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Service Modal State
@@ -265,10 +276,11 @@ export default function ServicesPage() {
 
   const fetchWaTemplates = async () => {
     try {
-      const res = await fetch("/api/wa/templates?type=follow_up", { headers: { "x-store-slug": slug } });
+      const res = await fetch("/api/wa/templates?type=follow_up&assignable=1", { headers: { "x-store-slug": slug } });
       const data = await res.json();
       if (data.success) {
         setWaTemplates(data.data || []);
+        setWaIsWaba(!!data.waba);
       }
     } catch (error) {
       console.error(error);
@@ -1757,7 +1769,7 @@ export default function ServicesPage() {
                     placeholder="Select template"
                     options={waTemplates.map((template) => ({
                       value: template._id,
-                      label: template.metaStatus === 'APPROVED' ? `🟢 ${template.name} [Meta Approved]` : template.metaStatus === 'PENDING' ? `🟡 ${template.name} [Pending Review]` : template.name,
+                      label: waTemplateOptionLabel(template),
                     }))}
                   />
                 </div>
@@ -1811,14 +1823,15 @@ export default function ServicesPage() {
                     placeholder="Optional template"
                     options={waTemplates.map((template) => ({
                       value: template._id,
-                      label: template.metaStatus === 'APPROVED' ? `🟢 ${template.name} [Meta Approved]` : template.metaStatus === 'PENDING' ? `🟡 ${template.name} [Pending Review]` : template.name,
+                      label: waTemplateOptionLabel(template),
                     }))}
                   />
                 </div>
                 {waTemplates.length === 0 && (
                   <p className="text-xs text-amber-700">
-                    WA template belum ada. Buat dulu template di menu WhatsApp
-                    template.
+                    {waIsWaba
+                      ? "Belum ada template follow-up yang di-APPROVE Meta. Buat & submit template di menu Template WhatsApp, lalu tunggu status APPROVED sebelum bisa dipilih di sini."
+                      : "WA template belum ada. Buat dulu template di menu WhatsApp template."}
                   </p>
                 )}
               </div>

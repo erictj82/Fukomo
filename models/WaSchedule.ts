@@ -12,6 +12,7 @@ export interface IWaSchedule extends Document {
     status: WaScheduleStatus;
     sentAt?: Date;
     processedAt?: Date;
+    error?: string;
 }
 
 const waScheduleSchema = new Schema<IWaSchedule>(
@@ -55,6 +56,10 @@ const waScheduleSchema = new Schema<IWaSchedule>(
         },
         processedAt: {
             type: Date,
+        },
+        error: {
+            type: String,
+            trim: true,
         },
     },
     { timestamps: true }

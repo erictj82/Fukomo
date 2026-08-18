@@ -14,10 +14,12 @@ export async function GET(request: NextRequest, props: any) {
             if (waPermErr) return waPermErr;
         }
 
+        let isWaba = false;
         try {
             const settings = await Settings.findOne({}).lean();
             const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
             if (waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba') {
+                isWaba = true;
                 const { secretKey, licensesKey } = waConfig.balesotomatis;
                 const result = await testBalesOtomatisWaba(secretKey, licensesKey);
                 if (result.success && result.templates && Array.isArray(result.templates)) {
@@ -88,9 +90,17 @@ export async function GET(request: NextRequest, props: any) {
             ];
         }
 
+        // Assignment dropdown (mis. follow-up per-service): kalau tenant WABA-mode, follow-up
+        // HANYA terkirim dgn template APPROVED (lihat scheduler Fase 1). Sembunyikan yang belum
+        // approved supaya user tidak salah pilih. Tenant Fonnte-only tetap free-text → tampil semua.
+        const assignable = String(searchParams.get('assignable') || '') === '1';
+        if (assignable && isWaba) {
+            query.metaStatus = 'APPROVED';
+        }
+
         const templates = await WaTemplate.find(query).sort({ createdAt: -1 });
 
-        return NextResponse.json({ success: true, data: templates });
+        return NextResponse.json({ success: true, data: templates, waba: isWaba });
     } catch (error: any) {
         return NextResponse.json(
             { success: false, error: error?.message || 'Failed to fetch WA templates' },
@@ -118,6 +128,10 @@ export async function POST(request: NextRequest, props: any) {
             : (Boolean(body?.isGreetingEnabled) ? 'greeting' : 'follow_up');
         const isGreetingEnabled = Boolean(body?.isGreetingEnabled);
         const submitToMeta = Boolean(body?.submitToMeta);
+        const requestedCategory = String(body?.metaCategory || '').trim().toUpperCase();
+        const metaCategory = requestedCategory === 'MARKETING' || requestedCategory === 'UTILITY'
+            ? requestedCategory
+            : 'UTILITY';
 
         if (!name || !message) {
             return NextResponse.json(
@@ -139,30 +153,40 @@ export async function POST(request: NextRequest, props: any) {
 
         let metaStatus: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED' = 'LOCAL';
         let metaTemplateName = '';
+        let metaVariables: string[] | undefined;
+        let metaWarning: string | undefined;
 
         if (submitToMeta) {
             const settings = await Settings.findOne({}).lean();
             const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
             if (waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba') {
                 const { secretKey, licensesKey } = waConfig.balesotomatis;
-                const result = await createBalesOtomatisTemplate(secretKey, licensesKey, name, message);
+                const result = await createBalesOtomatisTemplate(secretKey, licensesKey, name, message, metaCategory);
                 if (result.success) {
                     metaStatus = 'PENDING';
                     metaTemplateName = name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+                    metaVariables = result.variables;
+                } else {
+                    // Jangan bohongin user — simpan lokal (LOCAL) tapi kasih tau kenapa gagal ke Meta.
+                    metaWarning = result.error || 'Template gagal diajukan ke Meta, tersimpan sebagai lokal.';
                 }
+            } else {
+                metaWarning = 'WhatsApp Business API (WABA) belum aktif di Pengaturan → WhatsApp Provider. Template tersimpan sebagai lokal.';
             }
         }
 
-        const template = await WaTemplate.create({ 
-            name, 
-            message, 
-            templateType, 
+        const template = await WaTemplate.create({
+            name,
+            message,
+            templateType,
             isGreetingEnabled,
             metaStatus,
-            metaTemplateName: metaTemplateName || undefined
+            metaCategory,
+            metaTemplateName: metaTemplateName || undefined,
+            metaVariables,
         });
 
-        return NextResponse.json({ success: true, data: template });
+        return NextResponse.json({ success: true, data: template, warning: metaWarning });
     } catch (error: any) {
         return NextResponse.json(
             { success: false, error: error?.message || 'Failed to create WA template' },

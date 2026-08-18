@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkPermissionWithSession } from '@/lib/rbac';
 import { normalizeIndonesianPhone } from '@/lib/phone';
 import { getWaProviderConfigForPurpose } from '@/lib/waProvider';
+import { resolveCampaignTemplate } from '@/lib/waCampaignTemplate';
 
 
 // GET: Fetch upcoming campaigns
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest, props: any) {
 // POST: Create a new scheduled campaign
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-    const { Customer, WaCampaignQueue, Settings } = await getTenantModels(tenantSlug);
+    const { Customer, WaCampaignQueue, Settings, WaTemplate } = await getTenantModels(tenantSlug);
 
     // [B14 FIX] Gunakan checkPermissionWithSession — 1 auth() call
     const { error: permError, session } = await checkPermissionWithSession(request, 'customers', 'edit');
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest, props: any) {
         const settings = await Settings.findOne({}).lean();
         const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
         const body = await request.json();
-        const { customerIds, message, campaignName, scheduledAt, filters } = body;
+        const { customerIds, message, campaignName, scheduledAt, filters, templateId, templateValues } = body;
 
         if (!message?.trim()) {
             return NextResponse.json({ success: false, error: 'Message is required' }, { status: 400 });
@@ -57,6 +58,13 @@ export async function POST(request: NextRequest, props: any) {
         }
         if (!scheduledAt) {
             return NextResponse.json({ success: false, error: 'Schedule time is required' }, { status: 400 });
+        }
+
+        // Resolusi + validasi template WABA. Menolak blast WABA tanpa template approved
+        // (sebelumnya silent-fail lewat endpoint free-text di luar window 24 jam).
+        const tplResult = await resolveCampaignTemplate({ WaTemplate, waConfig, templateId, templateValues });
+        if (!tplResult.ok) {
+            return NextResponse.json({ success: false, error: tplResult.error }, { status: 400 });
         }
 
         // [B14 FIX] session diambil dari checkPermissionWithSession di atas
@@ -100,7 +108,13 @@ export async function POST(request: NextRequest, props: any) {
             filters: filters || {},
             targets,
             sentBy: (session as any)?.user?.id,
-            status: 'pending'
+            status: 'pending',
+            ...(tplResult.template ? {
+                waTemplateName: tplResult.template.waTemplateName,
+                waTemplateLanguage: tplResult.template.waTemplateLanguage,
+                waTemplateVariables: tplResult.template.waTemplateVariables,
+                waTemplateValues: tplResult.template.waTemplateValues,
+            } : {}),
         });
 
         return NextResponse.json({

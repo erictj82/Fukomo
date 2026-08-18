@@ -12,6 +12,7 @@ import { validateWhatsAppNumber } from '@/lib/fonnte';
 import { decryptFonnteToken } from '@/lib/encryption';
 import { validateMessageContent } from '@/lib/messageValidator';
 import { getWaProviderConfigForPurpose } from '@/lib/waProvider';
+import { resolveCampaignTemplate } from '@/lib/waCampaignTemplate';
 
 /* ------------------------------------------------------------------ */
 /*  GET — Filter customers for blast preview                           */
@@ -121,7 +122,7 @@ export async function GET(request: NextRequest, props: any) {
 
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-    const { Customer, WaCampaignQueue, Settings } = await getTenantModels(tenantSlug);
+    const { Customer, WaCampaignQueue, Settings, WaTemplate } = await getTenantModels(tenantSlug);
 
     // [B14 FIX] Gunakan checkPermissionWithSession — 1 auth() call
     const { error: permError, session } = await checkPermissionWithSession(request, 'customers', 'edit');
@@ -131,13 +132,19 @@ export async function POST(request: NextRequest, props: any) {
     const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
 
     const body = await request.json();
-    const { customerIds, message, campaignName, filters } = body;
+    const { customerIds, message, campaignName, filters, templateId, templateValues } = body;
 
     if (!message?.trim()) {
         return NextResponse.json({ success: false, error: 'Message is required' }, { status: 400 });
     }
     if (!customerIds?.length) {
         return NextResponse.json({ success: false, error: 'No customers selected' }, { status: 400 });
+    }
+
+    // Resolusi + validasi template WABA (lihat lib/waCampaignTemplate.ts).
+    const tplResult = await resolveCampaignTemplate({ WaTemplate, waConfig, templateId, templateValues });
+    if (!tplResult.ok) {
+        return NextResponse.json({ success: false, error: tplResult.error }, { status: 400 });
     }
 
     // Validate message content for spam risk
@@ -179,6 +186,12 @@ export async function POST(request: NextRequest, props: any) {
         targets,
         sentBy: (session as any)?.user?.id,
         status: 'pending',
+        ...(tplResult.template ? {
+            waTemplateName: tplResult.template.waTemplateName,
+            waTemplateLanguage: tplResult.template.waTemplateLanguage,
+            waTemplateVariables: tplResult.template.waTemplateVariables,
+            waTemplateValues: tplResult.template.waTemplateValues,
+        } : {}),
     });
 
     return NextResponse.json({

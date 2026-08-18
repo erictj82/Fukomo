@@ -55,7 +55,10 @@ vi.mock('@/lib/tenantDb', () => ({
   }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
+vi.mock('@/lib/rbac', async (importOriginal) => ({
+  ...(await importOriginal() as any),
+  // checkPermissionWithSession dibiarkan ASLI (baca auth() yang di-mock) supaya
+  // test "rejects unauthenticated" (auth→null) tetap mengembalikan 401.
   checkPermission: vi.fn().mockResolvedValue(null),
 }));
 

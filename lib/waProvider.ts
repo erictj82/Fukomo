@@ -206,6 +206,63 @@ export async function testBalesOtomatisWaba(
     }
 }
 
+// Contoh nilai per variabel yang dikenal — WAJIB dikirim ke Meta (`example.body_text`),
+// tanpa ini Meta menolak / template nyangkut jadi draft. Key di-lowercase.
+const TEMPLATE_SAMPLE_VALUES: Record<string, string> = {
+    nama_customer: 'Budi Santoso',
+    customername: 'Budi Santoso',
+    customer_name: 'Budi Santoso',
+    nama: 'Budi Santoso',
+    nama_service: 'Hair Spa',
+    service: 'Hair Spa',
+    nama_layanan: 'Hair Spa',
+    layanan: 'Hair Spa',
+    storename: 'Salon Cantik',
+    store_name: 'Salon Cantik',
+    nama_toko: 'Salon Cantik',
+    toko: 'Salon Cantik',
+    salon: 'Salon Cantik',
+    date: '9 Agustus 2026',
+    tanggal: '9 Agustus 2026',
+    time: '10:00',
+    jam: '10:00',
+    amount: 'Rp 150.000',
+    total: 'Rp 150.000',
+    nominal: 'Rp 150.000',
+};
+
+/**
+ * Meta WABA template WAJIB pakai placeholder BERNOMOR ({{1}}, {{2}}, ...), BUKAN bernama
+ * ({{nama_customer}}). Fungsi ini mengubah placeholder bernama → bernomor secara urut,
+ * menyimpan urutan nama variabel asli (buat mapping saat kirim), dan menghasilkan contoh
+ * nilai per variabel (buat `example.body_text`). Placeholder yang sudah bernomor dinormalkan
+ * ulang jadi urut (mis. {{1}}, {{3}} → {{1}}, {{2}}). Nama yang sama dipakai ulang nomornya.
+ */
+export function convertToMetaTemplate(message: string): {
+    text: string;
+    variables: string[];
+    examples: string[];
+} {
+    const variables: string[] = [];
+    const seen = new Map<string, number>(); // nama (lowercase) -> nomor 1-based
+
+    const text = String(message || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, rawName) => {
+        const name = String(rawName).trim();
+        const key = name.toLowerCase();
+        let idx = seen.get(key);
+        if (idx === undefined) {
+            variables.push(name);
+            idx = variables.length;
+            seen.set(key, idx);
+        }
+        return `{{${idx}}}`;
+    });
+
+    const examples = variables.map((name) => TEMPLATE_SAMPLE_VALUES[name.toLowerCase()] || 'Contoh');
+
+    return { text, variables, examples };
+}
+
 export async function createBalesOtomatisTemplate(
     secretKey: string,
     licensesKey: string,
@@ -213,32 +270,63 @@ export async function createBalesOtomatisTemplate(
     message: string,
     category: string = 'UTILITY',
     language: string = 'id'
-): Promise<{ success: boolean; data?: any; error?: string }> {
+): Promise<{ success: boolean; data?: any; error?: string; variables?: string[] }> {
     if (!secretKey || !licensesKey) return { success: false, error: 'Kredensial WABA kosong.' };
     try {
         const cleanName = templateName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const { text, variables, examples } = convertToMetaTemplate(message);
+
+        // Format payload WAJIB ikut kontrak BalesOtomatis (BUKAN format Meta Graph mentah).
+        // SDK resmi /create-template minta: `name`, `body` (string), `variables`
+        // (array {placeholder,label,example}), dan `submitToFacebook`. Kirim `components`
+        // ala Meta = ditolak / nyangkut sebagai draft, tidak pernah sampai ke Meta —
+        // inilah kenapa template mentok "PENDING/draft" selamanya sebelum fix ini.
+        const variablesPayload = variables.map((name, i) => ({
+            placeholder: `{{${i + 1}}}`,
+            label: name,
+            // Meta minta contoh nilai untuk SETIAP variabel — tanpa example template ditolak.
+            example: examples[i] || 'Contoh',
+        }));
+
         const payload = {
             secret_key: secretKey,
             licenses_key: licensesKey,
+            // Collection Postman /create-template pakai `licensesKey` (camelCase) sedangkan
+            // endpoint lain pakai `licenses_key` (snake) — kirim dua-duanya biar aman.
             secretKey: secretKey,
             licensesKey: licensesKey,
-            template_name: cleanName,
+            name: cleanName,
             language: language,
             category: category,
-            components: [
-                {
-                    type: "BODY",
-                    text: message
-                }
-            ]
+            // WAJIB true — tanpa ini template hanya tersimpan sebagai draft & tidak pernah
+            // diajukan ke Meta (inilah gejala template nyangkut sebelumnya).
+            submitToFacebook: true,
+            body: text,
+            variables: variablesPayload,
         };
         const data = await postJson('/create-template', payload);
-        if (data?.success || data?.code === '200' || data?.code === 200 || data?.fb_response) {
-            return { success: true, data };
+
+        // HONEST success detection. BalesOtomatis balikin success:true TAPI fb_response:null
+        // kalau template cuma tersimpan sebagai DRAFT (format non-conforming) — itu BUKAN sukses,
+        // Meta gak pernah nerima jadi gak akan pernah APPROVED. Bukti terkirim ke Meta = fb_response
+        // yang non-null (berisi status/id dari Meta). Tanpa itu → gagal, jangan ditandai PENDING.
+        const fbResponse = data?.fb_response;
+        if (fbResponse) {
+            return { success: true, data, variables };
         }
-        return { 
-            success: false, 
-            error: typeof data?.message === 'string' ? data.message : 'Gagal mengajukan template ke Meta. Pastikan kredensial WABA Anda valid.' 
+
+        const rawMsg = typeof data?.message === 'string' ? data.message : '';
+        if (/draft/i.test(rawMsg)) {
+            return {
+                success: false,
+                error:
+                    'Template hanya tersimpan sebagai draft dan TIDAK terkirim ke Meta. ' +
+                    'Biasanya karena format tidak sesuai — pastikan placeholder valid, isi pesan jelas, dan kategori cocok (MARKETING untuk promo, UTILITY untuk notifikasi).',
+            };
+        }
+        return {
+            success: false,
+            error: rawMsg || 'Gagal mengajukan template ke Meta. Pastikan kredensial WABA valid dan format template benar.',
         };
     } catch (error: any) {
         return { success: false, error: error?.message || 'Gagal menghubungi server WABA Meta' };
@@ -246,10 +334,119 @@ export async function createBalesOtomatisTemplate(
 }
 
 
+/**
+ * Ekstrak nama variabel dari body template — dukung placeholder bernama ({{nama_customer}})
+ * MAUPUN bernomor ({{1}}). Dipakai buat backfill campaign lama / template yang metaVariables-nya
+ * kosong (mis. hasil sync dari Meta yang cuma nyimpen bentuk bernomor). Urutan = kemunculan
+ * pertama; nama/angka yang sama tidak diduplikasi. Placeholder bernomor dikembalikan apa adanya
+ * ("1", "2") sehingga tetap punya "count" variabel yang benar walau tanpa nama asli.
+ */
+export function extractTemplateVariables(message: string): string[] {
+    const variables: string[] = [];
+    const seen = new Set<string>();
+    String(message || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, raw) => {
+        const name = String(raw).trim();
+        const key = name.toLowerCase();
+        if (name && !seen.has(key)) {
+            seen.add(key);
+            variables.push(name);
+        }
+        return _m;
+    });
+    return variables;
+}
+
+/**
+ * Susun `parameters` untuk Send Template WABA sesuai URUTAN variabel template.
+ *
+ * @param variables urutan nama variabel template (dari metaVariables, atau hasil
+ *   extractTemplateVariables kalau metaVariables kosong).
+ * @param values    nilai mentah per variabel yang diisi user di UI campaign. Key
+ *   di-lowercase-kan saat lookup. Nilai boleh mengandung token personalisasi
+ *   ({{nama_customer}}, {{storeName}}, {{date}}) yang di-resolve per penerima via `ctx`.
+ * @param ctx       konteks per penerima buat resolusi token.
+ *
+ * Kalau sebuah variabel tidak punya nilai eksplisit di `values`, fallback ke token
+ * personalisasi standar berdasarkan NAMA variabelnya (mis. variabel "nama_customer" →
+ * otomatis pakai ctx.customerName), supaya template lama yang variabelnya jelas maknanya
+ * tetap terisi tanpa user mengetik ulang.
+ */
+export function buildTemplateParameters(
+    variables: string[],
+    values: Record<string, string> | undefined,
+    ctx: { customerName?: string; storeName?: string; date?: string; serviceName?: string }
+): Array<{ type: 'text'; text: string }> {
+    const resolveTokens = (raw: string): string =>
+        String(raw ?? '')
+            .replace(/\{\{\s*(nama_customer|customername|customer_name|nama)\s*\}\}/gi, ctx.customerName || 'Pelanggan')
+            .replace(/\{\{\s*(storename|store_name|nama_toko|toko|salon)\s*\}\}/gi, ctx.storeName || 'Salon')
+            .replace(/\{\{\s*(nama_service|nama_layanan|service_name|servicename|layanan|service)\s*\}\}/gi, ctx.serviceName || 'Layanan')
+            .replace(/\{\{\s*(date|tanggal)\s*\}\}/gi, ctx.date || '');
+
+    // Fallback per-nama variabel kalau user tidak mengisi nilai eksplisit.
+    const nameFallback = (name: string): string => {
+        const k = name.toLowerCase();
+        if (['nama_customer', 'customername', 'customer_name', 'nama'].includes(k)) return ctx.customerName || 'Pelanggan';
+        if (['storename', 'store_name', 'nama_toko', 'toko', 'salon'].includes(k)) return ctx.storeName || 'Salon';
+        if (['nama_service', 'nama_layanan', 'service_name', 'servicename', 'layanan', 'service'].includes(k)) return ctx.serviceName || 'Layanan';
+        if (['date', 'tanggal'].includes(k)) return ctx.date || '';
+        return '';
+    };
+
+    return variables.map((name) => {
+        const explicit = values?.[name.toLowerCase()];
+        const raw = explicit !== undefined && explicit !== '' ? explicit : nameFallback(name);
+        return { type: 'text' as const, text: resolveTokens(raw) };
+    });
+}
+
+/**
+ * Resolusi ID NUMERIK Meta dari sebuah template APPROVED berdasarkan NAMA-nya.
+ *
+ * /send_message_template minta field `template` = ID NUMERIK Meta (mis. "1027996053304714"),
+ * BUKAN nama template. Terbukti empiris: kirim nama → "Template not found"; kirim ID numerik
+ * → "queued" + pesan terkirim. ID numerik ini ada di /get-template-list sebagai field
+ * `templateId` (stabil) dan cuma terisi untuk template ber-status APPROVED. (Ada juga field
+ * `template_id` base64 tapi itu token yang BERUBAH tiap request — jangan dipakai.)
+ *
+ * Balikin null kalau creds kosong, template tidak ketemu, atau belum APPROVED.
+ */
+export async function getBalesOtomatisTemplateId(
+    secretKey: string,
+    licensesKey: string,
+    templateName: string
+): Promise<string | null> {
+    if (!secretKey || !licensesKey || !templateName) return null;
+    try {
+        // NOTE: param `search` server-side semantiknya tidak jelas (mengembalikan 0 saat
+        // dikasih nama persis), jadi ambil list penuh (search kosong) lalu FILTER exact
+        // di sisi klien. Jumlah template per-tenant kecil, jadi ini aman & andal.
+        const data = await postJson('/get-template-list', {
+            secret_key: secretKey,
+            licenses_key: licensesKey,
+            search: '',
+            order_by: 'template_created_at',
+            order_dir: 'desc',
+            start: 0,
+            length: 100,
+        });
+        const list = Array.isArray(data?.data) ? data.data : [];
+        const match = list.find(
+            (t: any) =>
+                t?.template_name === templateName &&
+                String(t?.template_status).toUpperCase() === 'APPROVED' &&
+                t?.templateId
+        );
+        return match?.templateId ? String(match.templateId) : null;
+    } catch {
+        return null;
+    }
+}
+
 export async function sendTemplateViaBalesOtomatis(
     cfg: BalesOtomatisWabaConfig,
     phone: string,
-    templateName: string,
+    templateId: string,
     languageCode: string = 'id',
     parameters: Array<{ type: 'text'; text: string }> = []
 ): Promise<ProviderSendResult> {
@@ -258,14 +455,26 @@ export async function sendTemplateViaBalesOtomatis(
         if (!cfg.secretKey || !cfg.licensesKey) {
             return { success: false, error: 'BalesOtomatis WABA belum dikonfigurasi.' };
         }
+        if (!templateId) {
+            return { success: false, error: 'Template WABA belum ter-resolve ke ID Meta.' };
+        }
+        // Payload WAJIB ikut kontrak SDK resmi BalesOtomatis:
+        //   template   -> ID NUMERIK Meta template yang APPROVED (mis. "1027996053304714").
+        //                 BUKAN nama — kirim nama ditolak "Template not found". ID di-resolve
+        //                 dari /get-template-list (field `templateId`) lewat getBalesOtomatisTemplateId.
+        //   variables  -> array STRING berurutan sesuai {{1}},{{2}},...
+        //   recipients -> SATU string nomor (bukan array)
+        //   platform   -> WAJIB "whatsapp_bisnis_api"
+        // Sebelumnya kekirim `template_name`/`parameters`/`recipients:[]` tanpa `platform`
+        // → ditolak API → blast gagal senyap (antrean campaign kosong terus).
         const data = await postJson('/send_message_template', {
             secret_key: cfg.secretKey,
             licenses_key: cfg.licensesKey,
-            recipients: [`${countryCode}${localNumber}`],
-            template_name: templateName,
-            language: languageCode,
-            parameters,
+            recipients: `${countryCode}${localNumber}`,
+            platform: 'whatsapp_bisnis_api',
             method_send: 'async',
+            template: templateId,
+            variables: parameters.map((p) => p.text),
         });
         return parseBalesOtomatisResponse(data);
     } catch (error: any) {

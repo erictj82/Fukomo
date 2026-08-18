@@ -9,6 +9,7 @@ export interface IWaTemplate extends Document {
     metaTemplateName?: string;
     metaCategory?: string;
     metaLanguage?: string;
+    metaVariables?: string[];
     createdAt: Date;
 }
 
@@ -31,6 +32,10 @@ const waTemplateSchema = new Schema<IWaTemplate>(
         metaTemplateName: { type: String, trim: true },
         metaCategory: { type: String, default: 'UTILITY' },
         metaLanguage: { type: String, default: 'id' },
+        // Urutan nama variabel asli ({{nama_customer}}, {{nama_service}}, ...) yang dipetakan
+        // ke placeholder bernomor {{1}}, {{2}} saat diajukan ke Meta. Dipakai saat blast untuk
+        // menyusun `parameters` sesuai urutan yang benar.
+        metaVariables: { type: [String], default: undefined },
     },
     {
         timestamps: { createdAt: true, updatedAt: false },

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest, props: any) {
         const reviewStatus = fbResponse?.status === 'APPROVED' ? 'APPROVED' : 'PENDING';
         template.metaStatus = reviewStatus;
         template.metaTemplateName = cleanName;
-        if (fbResponse?.id) template.metaTemplateId = fbResponse.id;
+        if (result.variables) template.metaVariables = result.variables;
         await template.save();
 
         const reviewNotice = result.data?.review_notice_message 
