@@ -16,6 +16,8 @@
 # next.js
 /.next/
 /out/
+# build backups dari deploy distDir-swap (mis. .next.bak-prewa/) — artefak lokal, jangan di-track
+/.next.bak*/
 
 # production
 /build
