@@ -58,7 +58,8 @@ export async function GET(request: NextRequest, props: any) {
                     walletIncludedBundles: settings.walletIncludedBundles,
                     walletExpiryDays: settings.walletExpiryDays,
                     allowStaffDoubleBooking: settings.allowStaffDoubleBooking,
-                    financialReportSections: settings.financialReportSections
+                    financialReportSections: settings.financialReportSections,
+                    acquisitionSources: settings.acquisitionSources
                 }
             });
         }
@@ -132,11 +133,11 @@ export async function PUT(request: NextRequest, props: any) {
             'smtpSecure', 'smtpUser', 'smtpPassword', 'smtpFrom', 'reminderDaysBefore',
             'reminderMethod', 'aiEnabled', 'openaiApiKey', 'openaiModel', 'walletExpiryDays',
             'financialReportSections', 'allowStaffDoubleBooking', 'stockAdjustmentPassword',
-            'bankTransferPassword', 'ownerTransferPassword',
+            'bankTransferPassword', 'ownerTransferPassword', 'reprintInvoicePassword', 'acquisitionSources',
             'waAppointmentReminderEnabled', 'waAppointmentReminderMinutesBefore',
             'waAppointmentReminderDefaultTemplate', 'waNotaTemplate', 'waAdminNotaPrefix',
             'waProvider', 'waHybridMode', 'balesotomatisMode', 'balesotomatisApiKey', 'balesotomatisNumberId',
-            'balesotomatisSecretKey', 'balesotomatisLicensesKey'
+            'balesotomatisSecretKey', 'balesotomatisLicensesKey', 'backupSchedule'
         ];
 
         Object.keys(body).forEach(key => {
@@ -144,6 +145,49 @@ export async function PUT(request: NextRequest, props: any) {
                 delete body[key];
             }
         });
+
+        // Sumber akuisisi ("mengetahui dari"): bersihkan sebelum simpan — trim, buang string
+        // kosong, dan dedupe case-insensitive (biar "Instagram" & "instagram" tak dobel di
+        // dropdown POS / laporan funnel). Casing pertama yang diketik dipertahankan.
+        if (Array.isArray(body.acquisitionSources)) {
+            const seen = new Set<string>();
+            body.acquisitionSources = body.acquisitionSources
+                .map((s: unknown) => (typeof s === 'string' ? s.trim() : ''))
+                .filter((s: string) => {
+                    const k = s.toLowerCase();
+                    if (!s || seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                });
+        }
+
+        // Auto-backup: bersihkan sebelum simpan — maks 3 slot jam valid "HH:MM" (dedupe + urut),
+        // frequency dibatasi enum, dayOfWeek 0-6, retentionCount 1-90. Input ngawur dibuang, bukan
+        // bikin PUT gagal total (biar UX-nya toleran seperti field lain).
+        if (body.backupSchedule && typeof body.backupSchedule === 'object') {
+            const bs = body.backupSchedule;
+            const times = Array.isArray(bs.times) ? bs.times : [];
+            const seen = new Set<string>();
+            const cleanTimes = times
+                .map((t: unknown) => (typeof t === 'string' ? t.trim() : ''))
+                .filter((t: string) => {
+                    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)) return false;
+                    if (seen.has(t)) return false;
+                    seen.add(t);
+                    return true;
+                })
+                .sort()
+                .slice(0, 3);
+            const dow = Number(bs.dayOfWeek);
+            const keep = Number(bs.retentionCount);
+            body.backupSchedule = {
+                enabled: Boolean(bs.enabled),
+                frequency: bs.frequency === 'weekly' ? 'weekly' : 'daily',
+                dayOfWeek: Number.isInteger(dow) && dow >= 0 && dow <= 6 ? dow : 1,
+                times: cleanTimes,
+                retentionCount: Number.isFinite(keep) ? Math.min(90, Math.max(1, Math.round(keep))) : 14,
+            };
+        }
 
         // Sanitize Mongoose ObjectIds that might be sent as empty strings
         if (body.fonnteToken) {
@@ -161,7 +205,7 @@ export async function PUT(request: NextRequest, props: any) {
         if (body.balesotomatisLicensesKey) {
             body.balesotomatisLicensesKey = encryptFonnteToken(body.balesotomatisLicensesKey);
         }
-
+
         if (body.birthdayVoucherId === "") {
             body.birthdayVoucherId = null;
         }

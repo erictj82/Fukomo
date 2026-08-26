@@ -79,6 +79,17 @@ const SettingsSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    // Password cetak ulang nota/invoice — kosong = fitur mati (cetak ulang bebas).
+    reprintInvoicePassword: {
+        type: String,
+        default: ''
+    },
+    // Sumber akuisisi / "mengetahui dari" (marketing funnel). Daftar KOSONG = fitur mati
+    // (field POS tak wajib/tak muncul). Owner isi sendiri per kebutuhan marketing.
+    acquisitionSources: {
+        type: [String],
+        default: []
+    },
     showCommissionInPOS: {
         type: Boolean,
         default: false
@@ -387,6 +398,19 @@ const SettingsSchema = new mongoose.Schema({
     waAdminNotaPrefix: {
       type: String,
       default: '📋 *LAPORAN TRANSAKSI BARU*\n'
+    },
+    // Auto-backup terjadwal (permintaan klien): sampai 3 slot jam/hari, harian atau mingguan.
+    // Backup full-DB disimpan gzip ke disk luar app-tree + rotasi otomatis; download via UI (per
+    // rentang tanggal), TIDAK dikirim ke mana-mana. enabled=false atau times kosong = fitur mati.
+    backupSchedule: {
+        enabled: { type: Boolean, default: false },
+        frequency: { type: String, enum: ['daily', 'weekly'], default: 'daily' },
+        // 0=Minggu .. 6=Sabtu (WIB) — hanya dipakai saat frequency 'weekly'
+        dayOfWeek: { type: Number, min: 0, max: 6, default: 1 },
+        // maksimal 3, format "HH:MM" WIB (divalidasi & dipangkas di PUT /api/settings)
+        times: { type: [String], default: [] },
+        // simpan N backup terbaru per tenant; sisanya dirotasi (hapus otomatis)
+        retentionCount: { type: Number, default: 14, min: 1, max: 90 },
     },
 }, {
     timestamps: true

@@ -3,7 +3,7 @@
 
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Save, Store, Mail, Phone, MapPin, DollarSign, Percent, Image as ImageIcon, Globe, FileText, Clock, CreditCard, MessageSquare, Send, Bell, Sparkles, Trash2, RefreshCw, Gift, Crown, BarChart3, Calendar } from "lucide-react";
+import { Save, Store, Mail, Phone, MapPin, DollarSign, Percent, Image as ImageIcon, Globe, FileText, Clock, CreditCard, MessageSquare, Send, Bell, Sparkles, Trash2, RefreshCw, Gift, Crown, BarChart3, Calendar, Download, HardDrive, AlertTriangle, Upload } from "lucide-react";
 import FormInput, { FormSelect, FormButton } from "@/components/dashboard/FormInput";
 import SearchableSelect from "@/components/dashboard/SearchableSelect";
 import { getAllCurrencies } from "@/lib/currency";
@@ -48,6 +48,8 @@ interface Settings {
     stockAdjustmentPassword?: string;
     bankTransferPassword?: string;
     ownerTransferPassword?: string;
+    reprintInvoicePassword?: string;
+    acquisitionSources: string[];
     termsAndConditions: string;
 
     // Premium Membership
@@ -124,7 +126,43 @@ interface Settings {
     aiEnabled: boolean;
     openaiApiKey: string;
     openaiModel: string;
+
+    // Auto Backup terjadwal (disk-only, download per rentang tanggal)
+    backupSchedule: {
+        enabled: boolean;
+        frequency: "daily" | "weekly";
+        dayOfWeek: number; // 0=Minggu .. 6=Sabtu (WIB)
+        times: string[];   // maks 3, "HH:MM"
+        retentionCount: number;
+    };
 }
+
+interface BackupFileItem {
+    filename: string;
+    date: string;
+    time: string;
+    sizeBytes: number;
+    createdAt: string;
+}
+
+interface RestorePreviewItem { model: string; incoming: number; current: number; }
+interface RestorePreviewData {
+    slug: string;
+    items: RestorePreviewItem[];
+    unknownKeys: string[];
+    totalIncoming: number;
+    totalCurrent: number;
+}
+interface RestoreModelResult { model: string; deleted: number; inserted: number; failedCast: number; error?: string; }
+interface RestoreResultData {
+    slug: string;
+    mode: string;
+    safetyBackup: { status: string; filename?: string } | null;
+    perModel: RestoreModelResult[];
+    unknownKeys: string[];
+    ok: boolean;
+}
+type RestoreSource = { type: "disk"; file: string; label: string } | { type: "upload"; file: File; label: string };
 
 interface GreetingLogItem {
     _id: string;
@@ -175,6 +213,8 @@ export default function SettingsPage() {
         stockAdjustmentPassword: "",
         bankTransferPassword: "",
         ownerTransferPassword: "",
+        reprintInvoicePassword: "",
+        acquisitionSources: [],
         termsAndConditions: "",
         membershipPrice: 0,
         membershipDurationDays: 365,
@@ -242,6 +282,13 @@ export default function SettingsPage() {
         aiEnabled: false,
         openaiApiKey: "",
         openaiModel: "gpt-4o",
+        backupSchedule: {
+            enabled: false,
+            frequency: "daily",
+            dayOfWeek: 1,
+            times: [],
+            retentionCount: 14,
+        },
     });
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -257,6 +304,22 @@ export default function SettingsPage() {
     const [greetingLogTotal, setGreetingLogTotal] = useState(0);
     const [loadingGreetingLogs, setLoadingGreetingLogs] = useState(false);
 
+    // Auto Backup
+    const [backupList, setBackupList] = useState<BackupFileItem[]>([]);
+    const [loadingBackups, setLoadingBackups] = useState(false);
+    const [runningBackup, setRunningBackup] = useState(false);
+    const [backupFrom, setBackupFrom] = useState("");
+    const [backupTo, setBackupTo] = useState("");
+
+    // Restore / Import (operasi berbahaya: menimpa data live)
+    const [restoreMode, setRestoreMode] = useState<"replace" | "merge">("replace");
+    const [restoreDiskFile, setRestoreDiskFile] = useState("");
+    const [restoreSource, setRestoreSource] = useState<RestoreSource | null>(null);
+    const [restorePreview, setRestorePreview] = useState<RestorePreviewData | null>(null);
+    const [restoreConfirm, setRestoreConfirm] = useState("");
+    const [restoreBusy, setRestoreBusy] = useState(false);
+    const [restoreResult, setRestoreResult] = useState<RestoreResultData | null>(null);
+
     // Options for Wallet Included Items
     const [servicesOptions, setServicesOptions] = useState<{ _id: string; name: string; category?: any }[]>([]);
     const [productsOptions, setProductsOptions] = useState<{ _id: string; name: string }[]>([]);
@@ -270,6 +333,7 @@ export default function SettingsPage() {
         fetchSettings();
         fetchGreetingLogs();
         fetchOptions();
+        fetchBackups();
     }, []);
 
     const fetchOptions = async () => {
@@ -349,6 +413,8 @@ export default function SettingsPage() {
                     stockAdjustmentPassword: data.data.stockAdjustmentPassword || "",
                     bankTransferPassword: data.data.bankTransferPassword || "",
                     ownerTransferPassword: data.data.ownerTransferPassword || "",
+                    reprintInvoicePassword: data.data.reprintInvoicePassword || "",
+                    acquisitionSources: data.data.acquisitionSources || [],
                     termsAndConditions: data.data.termsAndConditions || "",
                     loyaltyPointPerSpend: data.data.loyaltyPointPerSpend || 0,
                     loyaltyPointValue: data.data.loyaltyPointValue || 0,
@@ -417,6 +483,13 @@ export default function SettingsPage() {
                     aiEnabled: data.data.aiEnabled || false,
                     openaiApiKey: data.data.openaiApiKey || "",
                     openaiModel: data.data.openaiModel || "gpt-4o",
+                    backupSchedule: {
+                        enabled: data.data.backupSchedule?.enabled ?? false,
+                        frequency: data.data.backupSchedule?.frequency === "weekly" ? "weekly" : "daily",
+                        dayOfWeek: Number.isInteger(data.data.backupSchedule?.dayOfWeek) ? data.data.backupSchedule.dayOfWeek : 1,
+                        times: Array.isArray(data.data.backupSchedule?.times) ? data.data.backupSchedule.times : [],
+                        retentionCount: data.data.backupSchedule?.retentionCount || 14,
+                    },
                 });
             }
         } catch (error) {
@@ -579,6 +652,161 @@ export default function SettingsPage() {
             setMessage({ type: "error", text: "Gagal menghapus semua greeting log" });
         } finally {
             setDeletingAllGreeting(false);
+        }
+    };
+
+    // ===== Auto Backup =====
+    const updateBackupSchedule = (patch: Partial<Settings["backupSchedule"]>) => {
+        setSettings((prev) => ({ ...prev, backupSchedule: { ...prev.backupSchedule, ...patch } }));
+    };
+
+    const setBackupTimeAt = (index: number, value: string) => {
+        setSettings((prev) => {
+            const times = [...(prev.backupSchedule.times || [])];
+            while (times.length <= index) times.push("");
+            times[index] = value;
+            return { ...prev, backupSchedule: { ...prev.backupSchedule, times } };
+        });
+    };
+
+    const formatBytes = (n: number) => {
+        if (!n) return "0 KB";
+        if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+        return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    };
+
+    const fetchBackups = async () => {
+        setLoadingBackups(true);
+        try {
+            const qs = new URLSearchParams();
+            if (backupFrom) qs.set("from", backupFrom);
+            if (backupTo) qs.set("to", backupTo);
+            const res = await fetch(`/api/settings/backup/list?${qs.toString()}`, { headers: { "x-store-slug": slug } });
+            const data = await res.json();
+            if (data.success) setBackupList(data.data?.backups || []);
+        } catch (error) {
+            console.error("Error fetching backups:", error);
+        } finally {
+            setLoadingBackups(false);
+        }
+    };
+
+    const handleRunBackupNow = async () => {
+        setRunningBackup(true);
+        try {
+            const res = await fetch("/api/settings/backup/run", { method: "POST", headers: { "x-store-slug": slug } });
+            const data = await res.json();
+            if (!data.success) {
+                setMessage({ type: "error", text: data.error || "Backup gagal" });
+                return;
+            }
+            const st = data.data?.status;
+            if (st === "written") setMessage({ type: "success", text: "Backup berhasil dibuat & tersimpan." });
+            else if (st === "exists") setMessage({ type: "success", text: "Backup untuk menit ini sudah ada (tidak dobel)." });
+            else if (st === "lowdisk") setMessage({ type: "error", text: "Backup dilewati: ruang disk menipis (<1GB)." });
+            else setMessage({ type: "error", text: "Backup gagal: " + (data.data?.error || "unknown") });
+            await fetchBackups();
+        } catch (error) {
+            console.error("Error running backup:", error);
+            setMessage({ type: "error", text: "Backup gagal" });
+        } finally {
+            setRunningBackup(false);
+        }
+    };
+
+    const triggerBlobDownload = async (url: string, fallbackName: string) => {
+        const res = await fetch(url, { headers: { "x-store-slug": slug } });
+        if (!res.ok) {
+            let msg = "Download gagal";
+            try { const j = await res.json(); msg = j.error || msg; } catch { /* non-json (file stream error) */ }
+            setMessage({ type: "error", text: msg });
+            return;
+        }
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = fallbackName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+    };
+
+    const handleDownloadBackup = async (filename: string) => {
+        await triggerBlobDownload(`/api/settings/backup/download?file=${encodeURIComponent(filename)}`, filename.replace(/\.gz$/, ""));
+    };
+
+    const handleDownloadFullBackup = async () => {
+        const today = new Date().toISOString().split("T")[0];
+        await triggerBlobDownload("/api/settings/backup", `salon-backup-${today}.json`);
+    };
+
+    // ===== Restore / Import =====
+    // Bangun URL & opsi fetch dari sumber (disk/upload). commit=true → benar-benar menimpa.
+    const buildRestoreRequest = (source: RestoreSource, commit: boolean): [string, RequestInit] => {
+        const qs = new URLSearchParams({ mode: restoreMode, source: source.type });
+        if (commit) { qs.set("commit", "1"); qs.set("confirm", slug); }
+        const headers: Record<string, string> = { "x-store-slug": slug };
+        const opts: RequestInit = { method: "POST", headers };
+        if (source.type === "disk") {
+            qs.set("file", source.file);
+        } else {
+            headers["Content-Type"] = "application/octet-stream";
+            opts.body = source.file; // File adalah Blob → dikirim sebagai raw bytes (json / json.gz)
+        }
+        return [`/api/settings/backup/restore?${qs.toString()}`, opts];
+    };
+
+    const handlePreviewRestore = async (source: RestoreSource) => {
+        setRestoreBusy(true);
+        setRestoreResult(null);
+        setRestorePreview(null);
+        setRestoreConfirm("");
+        try {
+            const [url, opts] = buildRestoreRequest(source, false);
+            const res = await fetch(url, opts);
+            const data = await res.json();
+            if (!data.success) {
+                setMessage({ type: "error", text: data.error || "Preview restore gagal" });
+                return;
+            }
+            setRestoreSource(source);
+            setRestorePreview(data.data);
+        } catch (error) {
+            console.error("Preview restore error:", error);
+            setMessage({ type: "error", text: "Preview restore gagal" });
+        } finally {
+            setRestoreBusy(false);
+        }
+    };
+
+    const handleCommitRestore = async () => {
+        if (!restoreSource || !restorePreview) return;
+        if (restoreConfirm !== slug) {
+            setMessage({ type: "error", text: `Konfirmasi salah — ketik "${slug}" persis.` });
+            return;
+        }
+        setRestoreBusy(true);
+        try {
+            const [url, opts] = buildRestoreRequest(restoreSource, true);
+            const res = await fetch(url, opts);
+            const data = await res.json();
+            setRestoreResult(data.data || null);
+            if (!data.success) {
+                setMessage({ type: "error", text: data.error || "Restore gagal / sebagian gagal (lihat rincian di bawah)." });
+            } else {
+                const sb = data.data?.safetyBackup?.filename;
+                setMessage({ type: "success", text: `Restore selesai. Safety-backup dibuat lebih dulu${sb ? `: ${sb}` : ""}.` });
+                setRestorePreview(null);
+                setRestoreConfirm("");
+                await fetchBackups();
+            }
+        } catch (error) {
+            console.error("Commit restore error:", error);
+            setMessage({ type: "error", text: "Restore gagal" });
+        } finally {
+            setRestoreBusy(false);
         }
     };
 
@@ -873,6 +1101,22 @@ export default function SettingsPage() {
                                     type="password"
                                     value={settings.ownerTransferPassword}
                                     onChange={(e) => setSettings({ ...settings, ownerTransferPassword: e.target.value })}
+                                    placeholder="Masukkan password..."
+                                    className="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-900 focus:border-transparent outline-none"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between p-4 bg-amber-50 rounded-xl border border-amber-200">
+                            <div className="flex-1 mr-4">
+                                <p className="text-sm font-bold text-gray-900">Password Cetak Ulang Nota</p>
+                                <p className="text-xs text-gray-500 mt-0.5">Password untuk MENCETAK ULANG nota/invoice yang sudah pernah dicetak. Cetak pertama tetap bebas; cetak ulang berikutnya minta password ini &amp; otomatis dicatat (siapa &amp; kapan). Kosongkan jika tidak ingin membatasi cetak ulang.</p>
+                            </div>
+                            <div className="w-1/3">
+                                <input
+                                    type="password"
+                                    value={settings.reprintInvoicePassword}
+                                    onChange={(e) => setSettings({ ...settings, reprintInvoicePassword: e.target.value })}
                                     placeholder="Masukkan password..."
                                     className="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-900 focus:border-transparent outline-none"
                                 />
@@ -1266,6 +1510,60 @@ export default function SettingsPage() {
                                 placeholder="Enter your terms and conditions..."
                             />
                         </div>
+                    </div>
+                </div>
+
+                {/* Sumber Pelanggan / Marketing Funnel */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                        <BarChart3 className="w-5 h-5 text-blue-900" />
+                        Sumber Pelanggan (Mengetahui Dari)
+                    </h2>
+                    <p className="text-xs text-gray-500 mb-4">
+                        Daftar pilihan &quot;Mengetahui dari&quot; yang WAJIB dipilih kasir saat transaksi di POS
+                        (mis. Instagram, TikTok, Teman, Google). Dipakai untuk laporan funneling marketing di menu Laporan.
+                        <br />
+                        <span className="text-amber-600 font-semibold">Biarkan kosong kalau belum mau pakai fitur ini</span> — kalau daftar kosong,
+                        field tidak muncul di POS dan tidak diwajibkan.
+                    </p>
+                    <div className="space-y-3">
+                        {(settings.acquisitionSources || []).map((src, idx) => (
+                            <div key={idx} className="flex gap-2 items-center">
+                                <input
+                                    type="text"
+                                    value={src}
+                                    onChange={(e) => {
+                                        const newSources = [...(settings.acquisitionSources || [])];
+                                        newSources[idx] = e.target.value;
+                                        setSettings({ ...settings, acquisitionSources: newSources });
+                                    }}
+                                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white"
+                                    placeholder="mis. Instagram"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const newSources = (settings.acquisitionSources || []).filter((_, i) => i !== idx);
+                                        setSettings({ ...settings, acquisitionSources: newSources });
+                                    }}
+                                    className="text-red-500 text-xs font-bold hover:text-red-700 px-2"
+                                >
+                                    Hapus
+                                </button>
+                            </div>
+                        ))}
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSettings({
+                                    ...settings,
+                                    acquisitionSources: [...(settings.acquisitionSources || []), ""],
+                                });
+                            }}
+                            className="text-sm text-blue-700 font-semibold hover:underline"
+                        >
+                            + Tambah Sumber
+                        </button>
                     </div>
                 </div>
 
@@ -2126,23 +2424,329 @@ export default function SettingsPage() {
                         <div className="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
                             <div>
                                 <h3 className="text-sm font-bold text-gray-900 uppercase tracking-tight">Database Backup</h3>
-                                <p className="text-xs text-gray-500 mt-1">Export all your business data to a JSON file for safety.</p>
+                                <p className="text-xs text-gray-500 mt-1">Unduh seluruh data bisnis ke satu file JSON sekarang juga.</p>
                             </div>
                             <button
                                 type="button"
-                                onClick={async () => {
-                                    try {
-                                        window.location.href = '/api/settings/backup';
-                                    } catch (error) {
-                                        console.error("Backup failed:", error);
-                                        alert("Backup failed. Please try again.");
-                                    }
-                                }}
+                                onClick={handleDownloadFullBackup}
                                 className="inline-flex items-center gap-2 px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-bold hover:bg-blue-800 transition-colors shadow-sm"
                             >
-                                <Save className="w-4 h-4" />
+                                <Download className="w-4 h-4" />
                                 Download Backup
                             </button>
+                        </div>
+
+                        {/* Auto Backup Terjadwal */}
+                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col gap-4">
+                            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                                <div>
+                                    <h3 className="text-sm font-bold text-gray-900 uppercase tracking-tight flex items-center gap-2">
+                                        <HardDrive className="w-4 h-4 text-blue-900" /> Auto Backup Terjadwal
+                                    </h3>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Backup otomatis full-database ke server pada jam yang kamu tentukan (maks 3 jam/hari).
+                                        Tersimpan aman & bisa diunduh per rentang tanggal di bawah — <span className="font-semibold">tidak dikirim ke mana pun</span>.
+                                    </p>
+                                </div>
+                                <label className="inline-flex items-center gap-2 cursor-pointer whitespace-nowrap">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.backupSchedule.enabled}
+                                        onChange={(e) => updateBackupSchedule({ enabled: e.target.checked })}
+                                        className="w-4 h-4 accent-blue-900"
+                                    />
+                                    <span className="text-sm font-semibold text-gray-800">Aktifkan</span>
+                                </label>
+                            </div>
+
+                            <div className={settings.backupSchedule.enabled ? "" : "opacity-50 pointer-events-none"}>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1">Frekuensi</label>
+                                        <select
+                                            value={settings.backupSchedule.frequency}
+                                            onChange={(e) => updateBackupSchedule({ frequency: e.target.value as "daily" | "weekly" })}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                        >
+                                            <option value="daily">Harian</option>
+                                            <option value="weekly">Mingguan</option>
+                                        </select>
+                                    </div>
+                                    {settings.backupSchedule.frequency === "weekly" && (
+                                        <div>
+                                            <label className="block text-xs font-semibold text-gray-700 mb-1">Hari (mingguan)</label>
+                                            <select
+                                                value={settings.backupSchedule.dayOfWeek}
+                                                onChange={(e) => updateBackupSchedule({ dayOfWeek: parseInt(e.target.value) })}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                            >
+                                                {["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"].map((d, i) => (
+                                                    <option key={i} value={i}>{d}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="mt-4">
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1">Jam Backup (WIB) — maks 3</label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                        {[0, 1, 2].map((i) => (
+                                            <input
+                                                key={i}
+                                                type="time"
+                                                value={settings.backupSchedule.times[i] || ""}
+                                                onChange={(e) => setBackupTimeAt(i, e.target.value)}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                            />
+                                        ))}
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 mt-1">Kosongkan yang tidak dipakai. Contoh: 09:00, 14:00, 21:00.</p>
+                                </div>
+
+                                <div className="mt-4 max-w-xs">
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1">Simpan berapa backup terakhir</label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={90}
+                                        value={settings.backupSchedule.retentionCount}
+                                        onChange={(e) => updateBackupSchedule({ retentionCount: parseInt(e.target.value) || 14 })}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                    />
+                                    <p className="text-[11px] text-gray-500 mt-1">Backup lama otomatis dihapus (rotasi) agar disk tidak penuh.</p>
+                                </div>
+
+                                <p className="text-[11px] text-amber-700 font-semibold mt-3">
+                                    ⚠️ Klik <span className="underline">Save Settings</span> di bawah agar jadwal tersimpan.
+                                </p>
+                            </div>
+
+                            {/* Daftar backup tersimpan + filter tanggal */}
+                            <div className="border-t border-gray-200 pt-4">
+                                <div className="flex flex-col md:flex-row md:items-end gap-2 md:gap-3">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1">Dari tanggal</label>
+                                        <input type="date" value={backupFrom} onChange={(e) => setBackupFrom(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1">Sampai tanggal</label>
+                                        <input type="date" value={backupTo} onChange={(e) => setBackupTo(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={fetchBackups}
+                                        disabled={loadingBackups}
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-700 text-white rounded-lg text-sm font-bold hover:bg-blue-600 transition-colors shadow-sm disabled:opacity-60"
+                                    >
+                                        <RefreshCw className="w-4 h-4" />
+                                        {loadingBackups ? "Memuat..." : "Filter / Refresh"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleRunBackupNow}
+                                        disabled={runningBackup}
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-bold hover:bg-emerald-600 transition-colors shadow-sm disabled:opacity-60"
+                                    >
+                                        <Save className="w-4 h-4" />
+                                        {runningBackup ? "Memproses..." : "Backup Sekarang"}
+                                    </button>
+                                </div>
+
+                                <div className="mt-3 max-h-72 overflow-auto border border-gray-200 rounded-lg bg-white">
+                                    {loadingBackups ? (
+                                        <div className="p-3 text-xs text-gray-500">Memuat daftar backup...</div>
+                                    ) : backupList.length === 0 ? (
+                                        <div className="p-3 text-xs text-gray-500">Belum ada backup tersimpan untuk rentang ini.</div>
+                                    ) : (
+                                        <ul className="divide-y divide-gray-100">
+                                            {backupList.map((b) => (
+                                                <li key={b.filename} className="p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-sm font-semibold text-gray-800">{b.date} · {b.time} WIB</p>
+                                                        <p className="text-[11px] text-gray-500">{formatBytes(b.sizeBytes)} · {b.filename}</p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDownloadBackup(b.filename)}
+                                                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded text-xs font-semibold hover:bg-blue-100"
+                                                    >
+                                                        <Download className="w-3.5 h-3.5" /> Unduh
+                                                    </button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Restore / Import Backup — OPERASI BERBAHAYA */}
+                        <div className="p-4 bg-red-50 rounded-lg border border-red-200 flex flex-col gap-4">
+                            <div>
+                                <h3 className="text-sm font-bold text-red-800 uppercase tracking-tight flex items-center gap-2">
+                                    <AlertTriangle className="w-4 h-4 text-red-700" /> Restore / Import Backup
+                                </h3>
+                                <p className="text-xs text-red-700 mt-1">
+                                    Kembalikan data dari file backup.{" "}
+                                    <span className="font-bold">Mode Replace MENGHAPUS data sekarang lalu menggantinya.</span>{" "}
+                                    Sistem otomatis membuat <span className="font-semibold">safety-backup</span> lebih dulu (titik undo). Hanya Owner / Super Admin.
+                                </p>
+                                <p className="text-[11px] text-red-600 mt-1">
+                                    ⚠️ Termasuk <span className="font-semibold">Settings, User &amp; Role</span> — memulihkan snapshot lama bisa mengubah login/izin. Cek tabel preview dulu.
+                                </p>
+                            </div>
+
+                            {/* Mode */}
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                                    <input type="radio" name="restoreMode" checked={restoreMode === "replace"} onChange={() => setRestoreMode("replace")} className="accent-red-700" />
+                                    <span className="font-semibold text-red-800">Replace</span> <span className="text-red-600 text-xs">(hapus + ganti — true restore)</span>
+                                </label>
+                                <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                                    <input type="radio" name="restoreMode" checked={restoreMode === "merge"} onChange={() => setRestoreMode("merge")} className="accent-red-700" />
+                                    <span className="font-semibold text-red-800">Merge</span> <span className="text-red-600 text-xs">(upsert per _id — tidak menghapus)</span>
+                                </label>
+                            </div>
+
+                            {/* Sumber */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="bg-white rounded-lg border border-red-100 p-3">
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1">Dari backup tersimpan</label>
+                                    <div className="flex gap-2">
+                                        <select
+                                            value={restoreDiskFile}
+                                            onChange={(e) => setRestoreDiskFile(e.target.value)}
+                                            className="flex-1 min-w-0 px-2 py-2 border border-gray-300 rounded-lg text-xs"
+                                        >
+                                            <option value="">— pilih backup —</option>
+                                            {backupList.map((b) => (
+                                                <option key={b.filename} value={b.filename}>{b.date} {b.time} · {formatBytes(b.sizeBytes)}</option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            type="button"
+                                            disabled={!restoreDiskFile || restoreBusy}
+                                            onClick={() => {
+                                                const b = backupList.find((x) => x.filename === restoreDiskFile);
+                                                if (b) handlePreviewRestore({ type: "disk", file: b.filename, label: `${b.date} ${b.time} WIB` });
+                                            }}
+                                            className="px-3 py-2 bg-red-700 text-white rounded-lg text-xs font-bold hover:bg-red-600 disabled:opacity-50 whitespace-nowrap"
+                                        >
+                                            Preview
+                                        </button>
+                                    </div>
+                                    <p className="text-[11px] text-gray-400 mt-1">Daftar mengikuti filter tanggal di atas.</p>
+                                </div>
+
+                                <div className="bg-white rounded-lg border border-red-100 p-3">
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1"><Upload className="w-3.5 h-3.5" /> Upload file (.json / .json.gz)</label>
+                                    <input
+                                        type="file"
+                                        accept=".json,.gz,application/json,application/gzip"
+                                        disabled={restoreBusy}
+                                        onChange={(e) => {
+                                            const f = e.target.files?.[0];
+                                            if (f) handlePreviewRestore({ type: "upload", file: f, label: f.name });
+                                            e.target.value = "";
+                                        }}
+                                        className="block w-full text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-red-100 file:text-red-700 file:text-xs file:font-bold hover:file:bg-red-200"
+                                    />
+                                    <p className="text-[11px] text-gray-400 mt-1">Memilih file langsung menampilkan preview.</p>
+                                </div>
+                            </div>
+
+                            {restoreBusy && !restorePreview && <p className="text-xs text-red-700 font-semibold">Memproses…</p>}
+
+                            {/* PREVIEW */}
+                            {restorePreview && restoreSource && (
+                                <div className="bg-white rounded-lg border border-red-200 p-3">
+                                    <p className="text-xs font-bold text-gray-800 mb-2">
+                                        Sumber: <span className="text-red-700">{restoreSource.label}</span> · Mode: <span className="uppercase">{restoreMode}</span>
+                                    </p>
+                                    <div className="max-h-56 overflow-auto border border-gray-100 rounded">
+                                        <table className="w-full text-[11px]">
+                                            <thead className="bg-gray-50 sticky top-0">
+                                                <tr>
+                                                    <th className="text-left p-1.5 font-semibold">Model</th>
+                                                    <th className="text-right p-1.5 font-semibold">Sekarang</th>
+                                                    <th className="text-right p-1.5 font-semibold">Dari backup</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {restorePreview.items.map((it) => (
+                                                    <tr key={it.model} className="border-t border-gray-100">
+                                                        <td className="p-1.5">{it.model}</td>
+                                                        <td className="p-1.5 text-right text-gray-500">{it.current.toLocaleString("id-ID")}</td>
+                                                        <td className="p-1.5 text-right font-semibold text-gray-800">{it.incoming.toLocaleString("id-ID")}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <p className="text-[11px] text-gray-600 mt-2">
+                                        Total <span className="font-semibold">{restorePreview.totalIncoming.toLocaleString("id-ID")}</span> dokumen akan {restoreMode === "replace" ? "menggantikan" : "di-merge ke"} <span className="font-semibold">{restorePreview.totalCurrent.toLocaleString("id-ID")}</span> dokumen sekarang.
+                                    </p>
+                                    {restorePreview.unknownKeys.length > 0 && (
+                                        <p className="text-[11px] text-amber-700 mt-1">Dilewati (tak dikenal): {restorePreview.unknownKeys.join(", ")}</p>
+                                    )}
+
+                                    <div className="mt-3 border-t border-red-100 pt-3">
+                                        <label className="block text-[11px] font-semibold text-red-800 mb-1">
+                                            Ketik <span className="font-mono bg-red-100 px-1 rounded">{slug}</span> untuk konfirmasi
+                                        </label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={restoreConfirm}
+                                                onChange={(e) => setRestoreConfirm(e.target.value)}
+                                                placeholder={slug}
+                                                className="flex-1 min-w-0 px-3 py-2 border border-red-300 rounded-lg text-sm"
+                                            />
+                                            <button
+                                                type="button"
+                                                disabled={restoreBusy || restoreConfirm !== slug}
+                                                onClick={handleCommitRestore}
+                                                className="px-4 py-2 bg-red-700 text-white rounded-lg text-sm font-bold hover:bg-red-600 disabled:opacity-50 whitespace-nowrap"
+                                            >
+                                                {restoreBusy ? "Memproses…" : restoreMode === "replace" ? "HAPUS & RESTORE" : "MERGE SEKARANG"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* HASIL */}
+                            {restoreResult && (
+                                <div className={`rounded-lg border p-3 ${restoreResult.ok ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}>
+                                    <p className={`text-xs font-bold ${restoreResult.ok ? "text-emerald-800" : "text-amber-800"}`}>
+                                        {restoreResult.ok ? "✅ Restore selesai." : "⚠️ Restore selesai dengan sebagian error."}
+                                        {restoreResult.safetyBackup?.filename && <span className="font-normal"> Safety-backup: {restoreResult.safetyBackup.filename}</span>}
+                                    </p>
+                                    <div className="max-h-48 overflow-auto mt-2 border border-gray-100 rounded bg-white">
+                                        <table className="w-full text-[11px]">
+                                            <thead className="bg-gray-50 sticky top-0">
+                                                <tr>
+                                                    <th className="text-left p-1.5 font-semibold">Model</th>
+                                                    <th className="text-right p-1.5 font-semibold">Dihapus</th>
+                                                    <th className="text-right p-1.5 font-semibold">Masuk</th>
+                                                    <th className="text-right p-1.5 font-semibold">Gagal</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {restoreResult.perModel.map((m) => (
+                                                    <tr key={m.model} className={`border-t border-gray-100 ${m.error ? "bg-red-50" : ""}`}>
+                                                        <td className="p-1.5">{m.model}{m.error && <span className="text-red-600"> — {m.error}</span>}</td>
+                                                        <td className="p-1.5 text-right text-gray-500">{m.deleted}</td>
+                                                        <td className="p-1.5 text-right font-semibold">{m.inserted}</td>
+                                                        <td className="p-1.5 text-right text-red-600">{m.failedCast || 0}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="p-4 bg-gray-50 rounded-lg border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">

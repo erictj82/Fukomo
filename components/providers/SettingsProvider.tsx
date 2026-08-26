@@ -38,6 +38,7 @@ interface Settings {
     stockAdjustmentPassword?: string;
     bankTransferPassword?: string;
     ownerTransferPassword?: string;
+    acquisitionSources?: string[];
 }
 
 interface SettingsContextType {
@@ -117,6 +118,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                     stockAdjustmentPassword: data.data.stockAdjustmentPassword || '',
                     bankTransferPassword: data.data.bankTransferPassword || '',
                     ownerTransferPassword: data.data.ownerTransferPassword || '',
+                    acquisitionSources: data.data.acquisitionSources || [],
                 });
             }
         } catch (error) {
