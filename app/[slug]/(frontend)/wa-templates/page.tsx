@@ -2,10 +2,17 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Edit, Plus, Search, Trash2, MessageSquareText } from "lucide-react";
+import { Edit, Plus, Search, Trash2, MessageSquareText, History } from "lucide-react";
 import Modal from "@/components/dashboard/Modal";
 import FormInput, { FormButton, FormSelect, FormTextArea } from "@/components/dashboard/FormInput";
 import PermissionGate from "@/components/PermissionGate";
+
+interface WaTemplateHistoryEntry {
+    at: string;
+    status: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
+    action: 'submitted' | 'status_change' | 'synced';
+    note?: string;
+}
 
 interface WaTemplate {
     _id: string;
@@ -15,6 +22,8 @@ interface WaTemplate {
     isGreetingEnabled?: boolean;
     metaStatus?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
     metaTemplateName?: string;
+    metaCategory?: string;
+    metaHistory?: WaTemplateHistoryEntry[];
     createdAt: string;
 }
 
@@ -25,6 +34,27 @@ const SAMPLE_VALUES: Record<string, string> = {
 
 const renderPreview = (message: string) => {
     return message.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key: string) => SAMPLE_VALUES[key] || "");
+};
+
+const HISTORY_ACTION_LABEL: Record<WaTemplateHistoryEntry['action'], string> = {
+    submitted: "Diajukan ke Meta",
+    status_change: "Perubahan status",
+    synced: "Sinkron dari Meta",
+};
+
+const formatHistoryDate = (iso: string) => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleString("id-ID", {
+        day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+    });
+};
+
+const historyStatusChip = (status: WaTemplateHistoryEntry['status']) => {
+    if (status === 'APPROVED') return "bg-emerald-100 text-emerald-800 border-emerald-300";
+    if (status === 'PENDING') return "bg-amber-100 text-amber-800 border-amber-300";
+    if (status === 'REJECTED') return "bg-rose-100 text-rose-800 border-rose-300";
+    return "bg-gray-100 text-gray-700 border-gray-300";
 };
 
 export default function WaTemplatesPage() {
@@ -43,11 +73,13 @@ export default function WaTemplatesPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState<WaTemplate | null>(null);
     const [submitting, setSubmitting] = useState(false);
+    const [openHistoryId, setOpenHistoryId] = useState<string | null>(null);
 
     const [formData, setFormData] = useState({
         name: "",
         message: "",
         templateType: "follow_up",
+        metaCategory: "MARKETING",
         isGreetingEnabled: false,
         submitToMeta: true,
     });
@@ -114,6 +146,7 @@ export default function WaTemplatesPage() {
                 name: template.name,
                 message: template.message,
                 templateType: template.templateType || (template.isGreetingEnabled ? 'greeting' : 'follow_up'),
+                metaCategory: template.metaCategory === 'UTILITY' || template.metaCategory === 'MARKETING' ? template.metaCategory : 'MARKETING',
                 isGreetingEnabled: Boolean(template.isGreetingEnabled),
                 submitToMeta: isWabaMode && template.metaStatus !== 'APPROVED',
             });
@@ -123,6 +156,7 @@ export default function WaTemplatesPage() {
                 name: "",
                 message: "Halo {{nama_customer}}, terima kasih sudah menggunakan layanan {{nama_service}} di salon kami.",
                 templateType: "follow_up",
+                metaCategory: "MARKETING",
                 isGreetingEnabled: false,
                 submitToMeta: isWabaMode,
             });
@@ -161,6 +195,17 @@ export default function WaTemplatesPage() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Meta menolak body template yang diawali/diakhiri variabel {{...}} — cegah sebelum submit
+        // biar tidak nyangkut PENDING selamanya (kasus fu_ke_2_21hr_15_step_treatment).
+        if (isWabaMode && formData.submitToMeta) {
+            const trimmedMsg = formData.message.trim();
+            if (/^\{\{[^{}]+\}\}/.test(trimmedMsg) || /\{\{[^{}]+\}\}$/.test(trimmedMsg)) {
+                alert("⚠️ Isi pesan tidak boleh diawali atau diakhiri variabel {{...}} — Meta pasti menolaknya.\n\nTambahkan teks di depan/belakang variabel (misal sapaan di awal, atau kalimat penutup di akhir seperti \"Ditunggu kedatangannya ya!\").");
+                return;
+            }
+        }
+
         setSubmitting(true);
 
         try {
@@ -410,8 +455,40 @@ export default function WaTemplatesPage() {
                                         <div className="font-semibold text-gray-700 mb-1">Preview:</div>
                                         {renderPreview(template.message)}
                                     </div>
+                                    {openHistoryId === template._id && (
+                                        <div className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                                            <div className="font-semibold text-slate-700 flex items-center gap-1">
+                                                <History className="w-3.5 h-3.5" /> Riwayat pendaftaran ke Meta
+                                            </div>
+                                            {template.metaHistory && template.metaHistory.length > 0 ? (
+                                                <ol className="space-y-1.5">
+                                                    {template.metaHistory.slice().reverse().map((h, i) => (
+                                                        <li key={i} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-2">
+                                                            <span className="text-slate-400 font-mono whitespace-nowrap">{formatHistoryDate(h.at)}</span>
+                                                            <span className={`inline-flex w-fit items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${historyStatusChip(h.status)}`}>{h.status}</span>
+                                                            <span className="text-slate-600">{h.note || HISTORY_ACTION_LABEL[h.action]}</span>
+                                                        </li>
+                                                    ))}
+                                                </ol>
+                                            ) : (
+                                                <p className="text-slate-500">Belum ada riwayat pendaftaran. Template ini belum pernah diajukan ke Meta.</p>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex gap-2 flex-wrap items-center">
+                                    {(isWabaMode || (template.metaHistory && template.metaHistory.length > 0)) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpenHistoryId(openHistoryId === template._id ? null : template._id)}
+                                            className={`px-3 py-2 border rounded-lg text-sm flex items-center gap-1 transition-colors ${openHistoryId === template._id
+                                                ? "border-slate-400 bg-slate-100 text-slate-800"
+                                                : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                                            title="Lihat riwayat pendaftaran template ke Meta"
+                                        >
+                                            <History className="w-4 h-4" /> Riwayat{template.metaHistory && template.metaHistory.length > 0 ? ` (${template.metaHistory.length})` : ""}
+                                        </button>
+                                    )}
                                     {isWabaMode && template.metaStatus !== 'APPROVED' && (
                                         <PermissionGate resource="waTemplates" action="edit">
                                             <button
@@ -491,6 +568,22 @@ export default function WaTemplatesPage() {
                             { value: "greeting", label: "Greeting" },
                         ]}
                     />
+                    {isWabaMode && (
+                        <>
+                            <FormSelect
+                                label="Kategori Meta (WABA)"
+                                value={formData.metaCategory}
+                                onChange={(e: any) => setFormData({ ...formData, metaCategory: e.target.value })}
+                                options={[
+                                    { value: "MARKETING", label: "Marketing — promo / follow-up / ajakan treatment lagi" },
+                                    { value: "UTILITY", label: "Utility — notifikasi transaksi (konfirmasi booking, status)" },
+                                ]}
+                            />
+                            <p className="text-xs text-gray-500 mb-4">
+                                Pilih <b>Marketing</b> untuk pesan promo, follow-up, atau ajakan datang lagi (paling umum di salon). <b>Utility</b> khusus notifikasi transaksi murni. Salah kategori bikin template ditahan atau ditolak Meta.
+                            </p>
+                        </>
+                    )}
                     {formData.templateType === 'greeting' && (
                         <label className="flex items-center gap-2 text-sm text-gray-700 mb-4">
                             <input

@@ -1,7 +1,7 @@
 import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission } from '@/lib/rbac';
-import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose, createBalesOtomatisTemplate } from '@/lib/waProvider';
+import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose, createBalesOtomatisTemplate, appendWaTemplateHistory, type WaTemplateHistoryEntry } from '@/lib/waProvider';
 
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -50,6 +50,11 @@ export async function POST(request: NextRequest, props: any) {
         template.metaStatus = reviewStatus;
         template.metaTemplateName = cleanName;
         if (result.variables) template.metaVariables = result.variables;
+        template.metaHistory = appendWaTemplateHistory(template.metaHistory as WaTemplateHistoryEntry[] | undefined, {
+            action: 'submitted',
+            status: reviewStatus,
+            note: reviewStatus === 'APPROVED' ? 'Diajukan ke Meta & langsung disetujui' : 'Diajukan ke Meta, menunggu review',
+        });
         await template.save();
 
         const reviewNotice = result.data?.review_notice_message 

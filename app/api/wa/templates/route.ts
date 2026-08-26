@@ -1,7 +1,7 @@
 import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission, checkPermissionWithSession } from '@/lib/rbac';
-import { getWaProviderConfigForPurpose, createBalesOtomatisTemplate, testBalesOtomatisWaba } from '@/lib/waProvider';
+import { getWaProviderConfigForPurpose, createBalesOtomatisTemplate, testBalesOtomatisWaba, pickBestMetaTemplates, extractTemplateVariables, appendWaTemplateHistory, parseMetaTimestamp, type MetaTemplateBest, type WaTemplateHistoryEntry } from '@/lib/waProvider';
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -23,44 +23,93 @@ export async function GET(request: NextRequest, props: any) {
                 const { secretKey, licensesKey } = waConfig.balesotomatis;
                 const result = await testBalesOtomatisWaba(secretKey, licensesKey);
                 if (result.success && result.templates && Array.isArray(result.templates)) {
+                    // Ciutkan list Meta jadi SATU entri terbaik per nama SEBELUM reconcile, supaya
+                    // entri DRAFT duplikat tidak menurunkan status APPROVED (lihat pickBestMetaTemplates).
+                    const best = pickBestMetaTemplates(result.templates);
                     const localTemplates = await WaTemplate.find({});
-                    for (const t of result.templates) {
-                        const metaName = String(t.name || t.template_name || '').trim().toLowerCase();
-                        if (!metaName) continue;
-                        const statusStr = String(t.status || t.template_status || 'PENDING').toUpperCase();
-                        let statusVal: 'PENDING' | 'APPROVED' | 'REJECTED' = 'PENDING';
-                        if (statusStr.includes('APPROV') || statusStr === 'ACTIVE') statusVal = 'APPROVED';
-                        else if (statusStr.includes('REJECT') || statusStr === 'DISABLED') statusVal = 'REJECTED';
+                    const matchedNames = new Set<string>();
 
-                        let matched = false;
-                        for (const loc of localTemplates) {
-                            const cleanLoc = loc.name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-                            if (cleanLoc === metaName || loc.name.toLowerCase() === metaName || loc.metaTemplateName === metaName) {
-                                if (loc.metaStatus !== statusVal || loc.metaTemplateName !== metaName) {
-                                    loc.metaStatus = statusVal;
-                                    loc.metaTemplateName = metaName;
-                                    await loc.save();
-                                }
-                                matched = true;
-                            }
+                    // 1) Reconcile status template lokal yang cocok dengan entri Meta terbaik.
+                    for (const loc of localTemplates) {
+                        const cleanLoc = String(loc.name || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+                        const candidates = [cleanLoc, String(loc.name || '').toLowerCase(), String(loc.metaTemplateName || '').toLowerCase()];
+                        let hit: MetaTemplateBest | undefined;
+                        let hitName = '';
+                        for (const c of candidates) {
+                            if (c && best.has(c)) { hit = best.get(c); hitName = c; break; }
                         }
-                        if (!matched) {
-                            let bodyText = metaName;
-                            if (Array.isArray(t.components)) {
-                                const bodyComp = t.components.find((c: any) => c.type === 'BODY' || c.type === 'body');
-                                if (bodyComp && bodyComp.text) bodyText = bodyComp.text;
-                            } else if (typeof t.message === 'string' && t.message) {
-                                bodyText = t.message;
-                            }
-                            await WaTemplate.create({
-                                name: metaName,
-                                message: bodyText,
-                                templateType: 'follow_up',
-                                isGreetingEnabled: false,
-                                metaStatus: statusVal,
-                                metaTemplateName: metaName,
+                        if (!hit) continue;
+                        matchedNames.add(hitName);
+                        const nextId = hit.templateId || undefined;
+
+                        let changed = false;
+                        const prevStatus = loc.metaStatus;
+                        if (loc.metaStatus !== hit.status) { loc.metaStatus = hit.status; changed = true; }
+                        if (loc.metaTemplateName !== hitName) { loc.metaTemplateName = hitName; changed = true; }
+                        if (loc.metaTemplateId !== nextId) { loc.metaTemplateId = nextId; changed = true; }
+
+                        // Riwayat pendaftaran: kalau belum ada riwayat sama sekali, seed SATU baseline
+                        // pakai tanggal registrasi asli dari Meta (bukan "sekarang") supaya template lama
+                        // punya titik awal yang benar. Kalau sudah ada riwayat & status benar-benar
+                        // berubah, catat transisinya. Reconcile jalan tiap buka halaman, jadi kita HANYA
+                        // menambah entri saat ada perubahan nyata (bukan tiap GET).
+                        const historyEmpty = !Array.isArray(loc.metaHistory) || loc.metaHistory.length === 0;
+                        if (historyEmpty) {
+                            loc.metaHistory = appendWaTemplateHistory(undefined, {
+                                action: 'synced',
+                                status: hit.status,
+                                at: parseMetaTimestamp(hit.createdAt) || undefined,
+                                note: 'Status awal terpantau (sinkron dari Meta)',
                             });
+                            changed = true;
+                        } else if (prevStatus !== hit.status) {
+                            loc.metaHistory = appendWaTemplateHistory(loc.metaHistory as WaTemplateHistoryEntry[], {
+                                action: 'status_change',
+                                status: hit.status,
+                                note: `Status berubah ${prevStatus || 'LOCAL'} → ${hit.status} (sinkron dari Meta${hit.rawStatus ? `: ${hit.rawStatus}` : ''})`,
+                            });
+                            changed = true;
                         }
+
+                        // Backfill body + variabel HANYA untuk row STUB hasil sync (message kosong
+                        // atau cuma berisi nama template itu sendiri). Ini bikin follow-up WABA punya
+                        // jumlah variabel yang benar ({{1}},{{2}}). Free-text asli user TIDAK ditimpa.
+                        const curMsg = String(loc.message || '').trim();
+                        const isStub = !curMsg
+                            || curMsg === hitName
+                            || curMsg.toLowerCase() === String(loc.name || '').toLowerCase();
+                        if (hit.content && isStub) {
+                            if (loc.message !== hit.content) { loc.message = hit.content; changed = true; }
+                            const hasVars = Array.isArray(loc.metaVariables) && loc.metaVariables.length > 0;
+                            if (!hasVars) {
+                                const vars = extractTemplateVariables(hit.content);
+                                if (vars.length > 0) { loc.metaVariables = vars; changed = true; }
+                            }
+                        }
+                        if (changed) await loc.save();
+                    }
+
+                    // 2) Buat template lokal untuk entri Meta yang belum ada padanannya di lokal.
+                    for (const [metaName, b] of best) {
+                        if (matchedNames.has(metaName)) continue;
+                        const bodyText = b.content || metaName;
+                        const vars = b.content ? extractTemplateVariables(b.content) : [];
+                        await WaTemplate.create({
+                            name: metaName,
+                            message: bodyText,
+                            templateType: 'follow_up',
+                            isGreetingEnabled: false,
+                            metaStatus: b.status,
+                            metaTemplateName: metaName,
+                            metaTemplateId: b.templateId || undefined,
+                            metaVariables: vars.length ? vars : undefined,
+                            metaHistory: appendWaTemplateHistory(undefined, {
+                                action: 'synced',
+                                status: b.status,
+                                at: parseMetaTimestamp(b.createdAt) || undefined,
+                                note: 'Ditemukan & disinkron dari Meta',
+                            }),
+                        });
                     }
                 }
             }
@@ -155,6 +204,7 @@ export async function POST(request: NextRequest, props: any) {
         let metaTemplateName = '';
         let metaVariables: string[] | undefined;
         let metaWarning: string | undefined;
+        let metaHistory: WaTemplateHistoryEntry[] | undefined;
 
         if (submitToMeta) {
             const settings = await Settings.findOne({}).lean();
@@ -173,6 +223,10 @@ export async function POST(request: NextRequest, props: any) {
             } else {
                 metaWarning = 'WhatsApp Business API (WABA) belum aktif di Pengaturan → WhatsApp Provider. Template tersimpan sebagai lokal.';
             }
+            // Catat percobaan pendaftaran (berhasil maupun gagal) sebagai entri riwayat pertama.
+            metaHistory = appendWaTemplateHistory(undefined, metaStatus === 'PENDING'
+                ? { action: 'submitted', status: 'PENDING', note: 'Template dibuat & diajukan ke Meta' }
+                : { action: 'submitted', status: 'LOCAL', note: `Gagal diajukan ke Meta: ${metaWarning}` });
         }
 
         const template = await WaTemplate.create({
@@ -184,6 +238,7 @@ export async function POST(request: NextRequest, props: any) {
             metaCategory,
             metaTemplateName: metaTemplateName || undefined,
             metaVariables,
+            metaHistory,
         });
 
         return NextResponse.json({ success: true, data: template, warning: metaWarning });

@@ -59,3 +59,45 @@ describe('buildTemplateParameters — dukungan nama_service (follow-up WABA)', (
         expect(params.map((p) => p.text)).toEqual(['Andi', 'Korean Glass Skin', 'Salon Fukomo']);
     });
 });
+
+// Placeholder BERNOMOR ({{1}},{{2}}) — dipakai template yg dibuat langsung di dashboard Meta/BSP
+// (mis. pusat: "Halo Kak {{1}}, ... hasil coloring {{2}}"). Tak ada nama variabel, jadi harus diisi
+// POSISIONAL: {{1}}=nama customer, {{2}}=service, {{3}}=toko, {{4}}=tanggal. Ini bug pusat 2026-08-22:
+// row stub hasil sync tak punya metaVariables → 0 param → follow-up gagal/kosong.
+describe('buildTemplateParameters — placeholder bernomor (template dashboard Meta)', () => {
+    const ctx = {
+        customerName: 'Andi',
+        storeName: 'Salon Fukomo',
+        date: '22 Agustus 2026',
+        serviceName: 'Coloring',
+    };
+
+    it('mengisi {{1}},{{2}} posisional ke nama customer & service', () => {
+        expect(buildTemplateParameters(['1', '2'], {}, ctx).map((p) => p.text)).toEqual(['Andi', 'Coloring']);
+    });
+
+    it('template 1 variabel: {{1}} = nama customer', () => {
+        expect(buildTemplateParameters(['1'], {}, ctx)[0].text).toBe('Andi');
+    });
+
+    it('posisi 3 & 4 = toko & tanggal, posisi di luar jangkauan = string kosong', () => {
+        expect(buildTemplateParameters(['3'], {}, ctx)[0].text).toBe('Salon Fukomo');
+        expect(buildTemplateParameters(['4'], {}, ctx)[0].text).toBe('22 Agustus 2026');
+        expect(buildTemplateParameters(['5'], {}, ctx)[0].text).toBe('');
+    });
+
+    it('kasus persis pusat: body bernomor -> extractTemplateVariables -> params terisi', () => {
+        const body = 'Halo Kak {{1}}, mau follow up hasil coloring {{2}} kemarin yaa';
+        const vars = extractTemplateVariables(body);
+        expect(vars).toEqual(['1', '2']);
+        expect(buildTemplateParameters(vars, {}, ctx).map((p) => p.text)).toEqual(['Andi', 'Coloring']);
+    });
+
+    it('nilai eksplisit (campaign) tetap menang atas fallback posisional', () => {
+        expect(buildTemplateParameters(['1'], { '1': 'KODE123' }, ctx)[0].text).toBe('KODE123');
+    });
+
+    it('default aman saat ctx kosong (Pelanggan/Layanan)', () => {
+        expect(buildTemplateParameters(['1', '2'], {}, {}).map((p) => p.text)).toEqual(['Pelanggan', 'Layanan']);
+    });
+});

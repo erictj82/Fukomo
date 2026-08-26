@@ -1,5 +1,5 @@
 import { decryptFonnteToken } from './encryption';
-import { tryConsumeUsage } from './subscriptionEnforcement';
+import { tryConsumeUsage, refundUsage } from './subscriptionEnforcement';
 import { sendViaBalesOtomatis, type WaProviderConfig, type WaMediaOptions } from './waProvider';
 
 export interface SendWhatsAppResult {
@@ -34,6 +34,7 @@ export async function sendWhatsApp(
     storeId?: string,
     mediaOptions?: WaMediaOptions
 ): Promise<SendWhatsAppResult> {
+    let usageConsumed = false;
     if (storeId) {
         const usageCheck = await tryConsumeUsage(storeId, 'wa', 1);
         if (!usageCheck.allowed) {
@@ -47,8 +48,30 @@ export async function sendWhatsApp(
                 quota: usageCheck.limit !== undefined ? { currentUsage: usageCheck.currentUsage ?? usageCheck.limit, limit: usageCheck.limit } : undefined,
             };
         }
+        usageConsumed = true; // kuota WA udah kepotong 1 di titik ini
     }
 
+    const result = await dispatchWhatsApp(phone, message, providerConfig, mediaOptions);
+
+    // Kuota tadi udah kepotong tapi WA-nya GAGAL kekirim (nomor/pesan kosong, error
+    // provider, Fonnte status=false, dsb) -> balikin 1 kuota. Case "blocked" udah
+    // di-return di atas TANPA consume, jadi gak nyampe sini. refundUsage best-effort
+    // (gak akan nglempar / nutupin hasil), jadi aman dipanggil langsung.
+    if (storeId && usageConsumed && !result.success) {
+        await refundUsage(storeId, 'wa', 1);
+    }
+
+    return result;
+}
+
+// Routing provider murni tanpa enforcement kuota — dipisah dari sendWhatsApp biar consume
+// & refund kuota kepusat di satu tempat, apa pun jalur providernya (Fonnte / BalesOtomatis).
+async function dispatchWhatsApp(
+    phone: string,
+    message: string,
+    providerConfig?: string | WaProviderConfig,
+    mediaOptions?: WaMediaOptions
+): Promise<SendWhatsAppResult> {
     if (!phone || !message) {
         return { success: false, error: 'phone and message are required' };
     }
@@ -59,8 +82,7 @@ export async function sendWhatsApp(
             if (!providerConfig.balesotomatis) {
                 return { success: false, error: 'Konfigurasi BalesOtomatis kosong.' };
             }
-            const result = await sendViaBalesOtomatis(providerConfig.balesotomatis, phone, message, mediaOptions);
-            return result;
+            return sendViaBalesOtomatis(providerConfig.balesotomatis, phone, message, mediaOptions);
         }
         // provider === 'fonnte' tapi dibungkus object (dari getWaProviderConfigFromSettings) -
         // lanjut ke jalur Fonnte biasa di bawah dengan token dari dalam object-nya.

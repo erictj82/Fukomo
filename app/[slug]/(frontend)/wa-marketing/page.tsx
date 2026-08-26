@@ -555,10 +555,16 @@ export default function WAMarketingPage() {
             <div className="flex flex-col">
               <span>WA Marketing</span>
               <div className="flex items-center gap-2 mt-1 text-xs font-normal">
+                {campaignWaba === true && (
+                  <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                    WABA aktif (blast &amp; follow-up via template resmi)
+                  </span>
+                )}
                 {fonnteStatus === 'ok' && (
                   <span className="flex items-center gap-1 text-green-600 font-medium">
                     <span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span>
-                    Fonnte terhubung
+                    {campaignWaba === true ? 'Fonnte terhubung (nota)' : 'Fonnte terhubung'}
                   </span>
                 )}
                 {fonnteStatus === 'unconfigured' && (
@@ -837,21 +843,92 @@ export default function WAMarketingPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-                      Message{" "}
-                      <span className="text-gray-400 font-normal">
-                        — gunakan {"{{nama_customer}}"} untuk personalisasi
-                      </span>
-                    </label>
-                    <textarea
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      rows={5}
-                      placeholder={`Halo {{nama_customer}}, kami punya promo spesial untuk Anda!`}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
-                    />
-                  </div>
+                  {campaignWaba === true ? (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg space-y-3">
+                      <div>
+                        <label className="text-xs font-semibold text-emerald-900 mb-1 flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          Template WABA (disetujui Meta)
+                        </label>
+                        <p className="text-[10px] text-emerald-700 mb-2 leading-relaxed">
+                          Mode WABA aktif — blast dikirim via <strong>Send Template</strong> resmi Meta (bukan teks bebas),
+                          karena penerima biasanya di luar window 24 jam. Pilih template yang sudah <strong>APPROVED</strong>.
+                        </p>
+                        {templatesLoading ? (
+                          <div className="text-xs text-emerald-700 flex items-center gap-1.5">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Memuat template…
+                          </div>
+                        ) : approvedTemplates.length === 0 ? (
+                          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                            Belum ada template yang disetujui Meta. Submit template di tab <strong>Template WhatsApp</strong> lalu tunggu status <strong>APPROVED</strong> dulu.
+                          </div>
+                        ) : (
+                          <select
+                            value={selectedTemplateId}
+                            onChange={(e) => handleTemplateSelect(e.target.value)}
+                            className="w-full px-3 py-2 border border-emerald-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-emerald-500 bg-white"
+                          >
+                            <option value="">— Pilih template —</option>
+                            {approvedTemplates.map((t) => (
+                              <option key={t._id} value={t._id}>
+                                {t.name}
+                                {t.metaTemplateName ? ` (${t.metaTemplateName})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+
+                      {selectedTemplate && (
+                        <div className="rounded-lg bg-white border border-emerald-100 p-3">
+                          <p className="text-[11px] text-gray-500 mb-2 whitespace-pre-wrap leading-relaxed">
+                            {selectedTemplate.message}
+                          </p>
+                          {templateVars.length > 0 && (
+                            <div className="space-y-2">
+                              {templateVars.map((v) => (
+                                <div key={v}>
+                                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                                    {`{{${v}}}`}
+                                    {isNameLikeVar(v) && (
+                                      <span className="text-gray-400 font-normal">
+                                        {" "}— otomatis diisi nama customer (boleh kosong)
+                                      </span>
+                                    )}
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={templateValues[v] || ""}
+                                    onChange={(e) =>
+                                      setTemplateValues((prev) => ({ ...prev, [v]: e.target.value }))
+                                    }
+                                    placeholder={isNameLikeVar(v) ? "(nama customer otomatis)" : `Nilai untuk ${v}`}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                        Message{" "}
+                        <span className="text-gray-400 font-normal">
+                          — gunakan {"{{nama_customer}}"} untuk personalisasi
+                        </span>
+                      </label>
+                      <textarea
+                        value={message}
+                        onChange={(e) => setMessage(e.target.value)}
+                        rows={5}
+                        placeholder={`Halo {{nama_customer}}, kami punya promo spesial untuk Anda!`}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                      />
+                    </div>
+                  )}
                   <div className="pt-2 border-t border-gray-100 flex flex-col gap-4">
                     <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
                       <div className="flex bg-gray-100 p-1 rounded-lg">
@@ -907,7 +984,7 @@ export default function WAMarketingPage() {
                       <button
                         onClick={handleBlast}
                         disabled={
-                          sending || selectedIds.size === 0 || !message.trim() || (sendMode === "schedule" && !scheduledAt)
+                          sending || selectedIds.size === 0 || (campaignWaba === true ? !selectedTemplateId : !message.trim()) || (sendMode === "schedule" && !scheduledAt)
                         }
                         className={`flex items-center gap-2 px-6 py-2.5 text-white rounded-lg text-sm font-bold transition-colors disabled:opacity-50 shadow-sm ${
                           sendMode === "schedule" ? "bg-indigo-600 hover:bg-indigo-700" : "bg-green-600 hover:bg-green-700"

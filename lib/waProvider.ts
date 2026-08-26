@@ -263,6 +263,38 @@ export function convertToMetaTemplate(message: string): {
     return { text, variables, examples };
 }
 
+/**
+ * Ekstrak pesan error yang JUJUR & informatif dari respons BalesOtomatis `/create-template`.
+ * Alasan gagal bisa nyempil di banyak tempat: error Meta Graph yang nested di `fb_response.error`
+ * (paling berguna — `error_user_title`/`error_user_msg`/`message`), atau field langsung dari
+ * BalesOtomatis (`message`/`error`/`msg`/`errors` yang bisa string, array, atau map field→pesan).
+ * Balikin '' kalau benar-benar tak ada petunjuk (caller fallback ke pesan generik).
+ */
+export function extractMetaErrorMessage(data: any): string {
+    if (!data || typeof data !== 'object') return '';
+    // 1) Error Meta Graph yang diteruskan BalesOtomatis lewat fb_response.
+    const fbErr = data.fb_response?.error ?? data.fb_response?.data?.error;
+    if (fbErr && typeof fbErr === 'object') {
+        const parts = [fbErr.error_user_title, fbErr.error_user_msg, fbErr.message]
+            .filter((x: any) => typeof x === 'string' && x.trim());
+        if (parts.length) return Array.from(new Set(parts)).join(' — ');
+    }
+    if (typeof fbErr === 'string' && fbErr.trim()) return fbErr.trim();
+    // 2) Field error langsung dari BalesOtomatis.
+    const direct = data.message ?? data.error ?? data.msg ?? data.errors;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    if (direct && typeof direct === 'object') {
+        try {
+            const flat = Array.isArray(direct)
+                ? direct.map((e: any) => (typeof e === 'string' ? e : e?.message || JSON.stringify(e)))
+                : Object.values(direct).flat();
+            const joined = flat.filter((x: any) => x != null && String(x).trim()).map((x: any) => String(x).trim()).join('; ');
+            if (joined) return joined;
+        } catch { /* ignore */ }
+    }
+    return '';
+}
+
 export async function createBalesOtomatisTemplate(
     secretKey: string,
     licensesKey: string,
@@ -275,6 +307,18 @@ export async function createBalesOtomatisTemplate(
     try {
         const cleanName = templateName.toLowerCase().replace(/[^a-z0-9_]/g, '_');
         const { text, variables, examples } = convertToMetaTemplate(message);
+
+        // Meta MENOLAK body yang diawali atau diakhiri variabel {{n}} (BalesOtomatis balas
+        // "Variables can't be at the end of the template body."). Tolak lebih awal dengan pesan
+        // jelas — nutup dua jalur: form buat template baru & tombol "Ajukan ke Meta". Tanpa guard
+        // ini template pasti ditolak/nyangkut PENDING selamanya.
+        const trimmedBody = text.trim();
+        if (/^\{\{\d+\}\}/.test(trimmedBody) || /\{\{\d+\}\}$/.test(trimmedBody)) {
+            return {
+                success: false,
+                error: 'Isi template tidak boleh diawali atau diakhiri variabel {{...}} — Meta pasti menolaknya. Tambahkan teks sebelum/sesudah variabel (misal sapaan di awal, atau kalimat penutup di akhir seperti "Ditunggu kedatangannya ya!").',
+            };
+        }
 
         // Format payload WAJIB ikut kontrak BalesOtomatis (BUKAN format Meta Graph mentah).
         // SDK resmi /create-template minta: `name`, `body` (string), `variables`
@@ -309,14 +353,22 @@ export async function createBalesOtomatisTemplate(
         // HONEST success detection. BalesOtomatis balikin success:true TAPI fb_response:null
         // kalau template cuma tersimpan sebagai DRAFT (format non-conforming) — itu BUKAN sukses,
         // Meta gak pernah nerima jadi gak akan pernah APPROVED. Bukti terkirim ke Meta = fb_response
-        // yang non-null (berisi status/id dari Meta). Tanpa itu → gagal, jangan ditandai PENDING.
+        // yang non-null DAN tidak berisi error. Kalau fb_response = objek error dari Meta, itu GAGAL
+        // (jangan ditandai sukses cuma karena non-null).
         const fbResponse = data?.fb_response;
-        if (fbResponse) {
+        const fbHasError = !!(fbResponse && typeof fbResponse === 'object' && (fbResponse.error || fbResponse.data?.error));
+        if (fbResponse && !fbHasError) {
             return { success: true, data, variables };
         }
 
-        const rawMsg = typeof data?.message === 'string' ? data.message : '';
-        if (/draft/i.test(rawMsg)) {
+        // Gagal — surface alasan ASLI (dari Meta / BalesOtomatis), JANGAN ditelan jadi pesan generik.
+        // Log raw response (dipangkas) biar bisa didiagnosa dari log PM2 kalau user lapor lagi.
+        const detail = extractMetaErrorMessage(data);
+        try {
+            console.error(`[createBalesOtomatisTemplate] gagal name="${cleanName}" detail="${detail}" raw=${JSON.stringify(data).slice(0, 800)}`);
+        } catch { /* ignore */ }
+
+        if (/draft/i.test(detail)) {
             return {
                 success: false,
                 error:
@@ -324,9 +376,17 @@ export async function createBalesOtomatisTemplate(
                     'Biasanya karena format tidak sesuai — pastikan placeholder valid, isi pesan jelas, dan kategori cocok (MARKETING untuk promo, UTILITY untuk notifikasi).',
             };
         }
+        if (/exist|duplicat|already|sudah ada/i.test(detail)) {
+            return {
+                success: false,
+                error: `Nama template "${cleanName}" sudah terdaftar di Meta, jadi tidak bisa diajukan ulang. Klik "Sync & Cek Status Meta" untuk menarik status terbarunya. (Detail: ${detail})`,
+            };
+        }
         return {
             success: false,
-            error: rawMsg || 'Gagal mengajukan template ke Meta. Pastikan kredensial WABA valid dan format template benar.',
+            error: detail
+                ? `Ditolak Meta: ${detail}`
+                : 'Gagal mengajukan template ke Meta. Coba klik "Sync & Cek Status Meta" dulu — mungkin template sudah pernah diajukan. Kalau tetap gagal, cek kredensial WABA & format pesannya.',
         };
     } catch (error: any) {
         return { success: false, error: error?.message || 'Gagal menghubungi server WABA Meta' };
@@ -393,10 +453,31 @@ export function buildTemplateParameters(
         return '';
     };
 
+    // Placeholder BERNOMOR ({{1}},{{2}},…) itu POSISIONAL — dipakai template yang dibuat langsung
+    // di dashboard Meta/BSP (bukan lewat app), jadi kita tak punya nama variabelnya. Map by posisi
+    // ke konteks standar follow-up: {{1}}=nama customer, {{2}}=nama service, {{3}}=nama toko,
+    // {{4}}=tanggal. Ini konvensi name-first yang dipakai app (convertNamedToNumberedPlaceholders)
+    // & semua template klien saat ini (mis. "Halo Kak {{1}}, ... hasil coloring {{2}}").
+    const positional = [
+        ctx.customerName || 'Pelanggan',
+        ctx.serviceName || 'Layanan',
+        ctx.storeName || 'Salon',
+        ctx.date || '',
+    ];
+    const numberedFallback = (name: string): string | null => {
+        if (!/^\d+$/.test(name)) return null;
+        const idx = Number(name) - 1;
+        return idx >= 0 && idx < positional.length ? positional[idx] : '';
+    };
+
     return variables.map((name) => {
         const explicit = values?.[name.toLowerCase()];
-        const raw = explicit !== undefined && explicit !== '' ? explicit : nameFallback(name);
-        return { type: 'text' as const, text: resolveTokens(raw) };
+        if (explicit !== undefined && explicit !== '') {
+            return { type: 'text' as const, text: resolveTokens(explicit) };
+        }
+        const numbered = numberedFallback(name);
+        if (numbered !== null) return { type: 'text' as const, text: numbered };
+        return { type: 'text' as const, text: resolveTokens(nameFallback(name)) };
     });
 }
 
@@ -441,6 +522,135 @@ export async function getBalesOtomatisTemplateId(
     } catch {
         return null;
     }
+}
+
+/**
+ * Petakan status template dari Meta/BSP ke enum internal 3-nilai. Meta punya banyak status
+ * (APPROVED, PENDING/IN_REVIEW, REJECTED, PAUSED, DISABLED, IN_APPEAL, PENDING_DELETION,
+ * DELETED, FLAGGED, LIMIT_EXCEEDED) + DRAFT lokal BSP. Hanya APPROVED yang bisa dikirim; sisanya
+ * dipetakan berdasar "sendability":
+ *   - APPROVED / ACTIVE                              -> APPROVED (bisa dikirim)
+ *   - REJECTED / DISABLED / PAUSED / DELETED         -> REJECTED (butuh aksi, tak terkirim)
+ *   - lainnya (PENDING/IN_REVIEW/IN_APPEAL/DRAFT/…)  -> PENDING (belum siap)
+ */
+export function normalizeMetaTemplateStatus(raw: unknown): 'PENDING' | 'APPROVED' | 'REJECTED' {
+    const s = String(raw ?? '').toUpperCase();
+    if (s.includes('APPROV') || s === 'ACTIVE') return 'APPROVED';
+    if (s.includes('REJECT') || s.includes('DISABL') || s.includes('PAUSE') || s.includes('DELET')) return 'REJECTED';
+    return 'PENDING';
+}
+
+export interface MetaTemplateBest {
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    templateId: string | null;
+    rawStatus: string;
+    /** Body template dari Meta/BSP (BalesOtomatis: `template_content`; Meta Cloud: komponen BODY).
+     *  Placeholder umumnya BERNOMOR ({{1}},{{2}}). Dipakai reconcile buat backfill message +
+     *  metaVariables template lokal yg cuma stub (message = nama) supaya follow-up bisa terisi. */
+    content: string;
+    /** Timestamp asli dari Meta/BSP (`template_created_at` / `template_updated_at`), mentah. Dipakai
+     *  reconcile buat seed baseline riwayat pendaftaran dgn tanggal registrasi Meta yg sebenarnya
+     *  (bukan "sekarang") untuk template lama yg baru pertama kali disinkron. */
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Ambil body template dari bentuk BalesOtomatis (`template_content`) atau Meta Cloud (komponen
+ *  BODY) atau fallback `message`. Balikin '' kalau tak ada. */
+function extractMetaTemplateBody(t: any): string {
+    if (t && typeof t.template_content === 'string' && t.template_content) return t.template_content;
+    if (t && Array.isArray(t.components)) {
+        const body = t.components.find((c: any) => String(c?.type || '').toUpperCase() === 'BODY');
+        if (body?.text) return String(body.text);
+    }
+    if (t && typeof t.message === 'string' && t.message) return t.message;
+    return '';
+}
+
+/**
+ * Meta/BSP bisa mengembalikan BEBERAPA entri untuk `template_name` yang sama — lazimnya satu
+ * DRAFT tanpa id numerik + satu APPROVED dengan id (terjadi saat template diedit/di-versioning).
+ * Reconcile naif "pakai entri terakhir" bisa MENURUNKAN APPROVED jadi PENDING kalau entri DRAFT
+ * kebetulan diproses belakangan — inilah yang bikin status lokal drift dari Meta (template kerja
+ * malah kesembunyi dari dropdown assignable). Fungsi ini menciutkan list jadi SATU entri terbaik
+ * per nama (ternormalisasi lowercase) berdasar sendability: APPROVED+id > APPROVED > PENDING >
+ * REJECTED. Kriteria "APPROVED + templateId numerik" sengaja disamakan dgn getBalesOtomatisTemplateId.
+ */
+export function pickBestMetaTemplates(list: any[]): Map<string, MetaTemplateBest> {
+    const rank = (b: MetaTemplateBest) =>
+        b.status === 'APPROVED' ? (b.templateId ? 4 : 3) : b.status === 'PENDING' ? 2 : 1;
+    const best = new Map<string, MetaTemplateBest>();
+    for (const t of Array.isArray(list) ? list : []) {
+        const name = String(t?.template_name ?? t?.name ?? '').trim().toLowerCase();
+        if (!name) continue;
+        // HANYA field `templateId` (numerik & stabil) yang boleh jadi id kirim. JANGAN pakai
+        // `template_id` (token base64 yg BERUBAH tiap request — lihat getBalesOtomatisTemplateId).
+        const rawId = t?.templateId ?? t?.id;
+        const cur: MetaTemplateBest = {
+            status: normalizeMetaTemplateStatus(t?.template_status ?? t?.status),
+            templateId: rawId ? String(rawId) : null,
+            rawStatus: String(t?.template_status ?? t?.status ?? ''),
+            content: extractMetaTemplateBody(t),
+            createdAt: String(t?.template_created_at ?? t?.created_at ?? ''),
+            updatedAt: String(t?.template_updated_at ?? t?.updated_at ?? ''),
+        };
+        const prev = best.get(name);
+        if (!prev || rank(cur) > rank(prev)) best.set(name, cur);
+    }
+    return best;
+}
+
+export type WaTemplateHistoryAction = 'submitted' | 'status_change' | 'synced';
+
+export interface WaTemplateHistoryEntry {
+    at: Date;
+    status: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
+    action: WaTemplateHistoryAction;
+    note?: string;
+}
+
+/** Batas jumlah entri riwayat yg disimpan per template — cukup buat audit tanpa bikin dokumen membengkak. */
+export const MAX_WA_TEMPLATE_HISTORY = 50;
+
+/**
+ * Tambahkan satu entri ke riwayat pendaftaran template (pure — balikin array BARU, tidak mem-mutasi
+ * input). Urutan kronologis (terlama → terbaru); di-cap MAX_WA_TEMPLATE_HISTORY entri terakhir.
+ * `at` default ke sekarang bila tak diberikan (dipakai memberi tanggal registrasi Meta yg sebenarnya
+ * saat seed baseline template lama).
+ */
+export function appendWaTemplateHistory(
+    existing: WaTemplateHistoryEntry[] | undefined,
+    entry: { status: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED'; action: WaTemplateHistoryAction; note?: string; at?: Date }
+): WaTemplateHistoryEntry[] {
+    const list = Array.isArray(existing) ? existing.slice() : [];
+    list.push({
+        at: entry.at instanceof Date && !isNaN(entry.at.getTime()) ? entry.at : new Date(),
+        status: entry.status,
+        action: entry.action,
+        ...(entry.note ? { note: entry.note } : {}),
+    });
+    return list.length > MAX_WA_TEMPLATE_HISTORY ? list.slice(list.length - MAX_WA_TEMPLATE_HISTORY) : list;
+}
+
+/**
+ * Parse timestamp mentah dari Meta/BSP jadi Date. Toleran terhadap epoch detik/milidetik (angka atau
+ * string angka) maupun string tanggal (ISO / "YYYY-MM-DD HH:mm:ss"). Balikin `null` bila tak bisa
+ * di-parse — caller boleh fallback ke `new Date()`.
+ */
+export function parseMetaTimestamp(v: unknown): Date | null {
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+    if (typeof v === 'number' && isFinite(v)) return new Date(v < 1e12 ? v * 1000 : v);
+    if (typeof v === 'string') {
+        const s = v.trim();
+        if (!s) return null;
+        if (/^\d+$/.test(s)) {
+            const n = Number(s);
+            if (isFinite(n)) return new Date(n < 1e12 ? n * 1000 : n);
+        }
+        const d = new Date(s.includes(' ') && !s.includes('T') ? s.replace(' ', 'T') : s);
+        if (!isNaN(d.getTime())) return d;
+    }
+    return null;
 }
 
 export async function sendTemplateViaBalesOtomatis(
