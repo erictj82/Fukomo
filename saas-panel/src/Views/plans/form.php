@@ -68,18 +68,24 @@ $LIMIT_TYPES = ['staff' => 'Staff', 'transaction' => 'Transaksi', 'wa' => 'Pesan
 
   <div class="card">
     <div class="card-header"><h3 class="card-title">Limit Kuota</h3></div>
-    <div class="card-body form-row">
-      <div class="form-group col-md-4">
-        <label>Max Staff</label>
-        <input type="number" name="maxStaff" class="form-control" min="0" value="<?= (int)($lim['maxStaff'] ?? 0) ?>">
-      </div>
-      <div class="form-group col-md-4">
-        <label>Max Transaksi / bulan</label>
-        <input type="number" name="maxTransactionsPerMonth" class="form-control" min="0" value="<?= (int)($lim['maxTransactionsPerMonth'] ?? 0) ?>">
-      </div>
-      <div class="form-group col-md-4">
-        <label>Max Pesan WA / bulan</label>
-        <input type="number" name="maxWaMessagesPerMonth" class="form-control" min="0" value="<?= (int)($lim['maxWaMessagesPerMonth'] ?? 0) ?>">
+    <div class="card-body">
+      <p class="text-muted small mb-2"><i class="fas fa-info-circle mr-1"></i> Isi <code>-1</code> untuk <strong>unlimited</strong>, <code>0</code> untuk mematikan fitur, atau angka positif sebagai batas.</p>
+      <div class="form-row">
+        <div class="form-group col-md-4">
+          <label>Max Staff</label>
+          <input type="number" name="maxStaff" class="form-control" min="-1" value="<?= (int)($lim['maxStaff'] ?? 0) ?>">
+          <small class="form-text text-muted">-1 = unlimited</small>
+        </div>
+        <div class="form-group col-md-4">
+          <label>Max Transaksi / bulan</label>
+          <input type="number" name="maxTransactionsPerMonth" class="form-control" min="-1" value="<?= (int)($lim['maxTransactionsPerMonth'] ?? 0) ?>">
+          <small class="form-text text-muted">-1 = unlimited</small>
+        </div>
+        <div class="form-group col-md-4">
+          <label>Max Pesan WA / bulan</label>
+          <input type="number" name="maxWaMessagesPerMonth" class="form-control" min="-1" value="<?= (int)($lim['maxWaMessagesPerMonth'] ?? 0) ?>">
+          <small class="form-text text-muted">-1 = unlimited</small>
+        </div>
       </div>
     </div>
   </div>

@@ -63,7 +63,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                 _id: store._id,
                 name: store.name,
                 slug: store.slug,
-                dbUri: store.dbUri, // panel butuh ini buat debug/manual ops
+                // dbUri SENGAJA tidak dikembalikan: itu kredensial DB tenant (user:pass@host).
+                // Panel gak pernah butuh — cukup slug buat identifikasi. Manual ops yang butuh
+                // URI ambil langsung dari Master DB, bukan lewat internal API internet-facing.
                 isActive: store.isActive,
                 subscriptionStatus: store.subscriptionStatus,
                 subscriptionExpiresAt: store.subscriptionExpiresAt,

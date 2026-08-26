@@ -108,7 +108,11 @@ export async function tryConsumeUsage(
         limitType === 'transaction'
             ? subscription.planSnapshot.limits.maxTransactionsPerMonth
             : subscription.planSnapshot.limits.maxWaMessagesPerMonth;
-    const effectiveLimit = baseLimit + sumActiveAddOns(subscription.activeAddOns, limitType, now);
+    // Limit < 0 = UNLIMITED (konvensi: -1 unlimited, 0 fitur mati, >0 batas beneran).
+    // Cek dari baseLimit, BUKAN effectiveLimit — biar add-on gak ngubah unlimited (-1)
+    // jadi angka finite (mis. -1 + 100 = 99).
+    const isUnlimited = baseLimit < 0;
+    const effectiveLimit = isUnlimited ? -1 : baseLimit + sumActiveAddOns(subscription.activeAddOns, limitType, now);
 
     const { periodStart, periodEnd } = getUsagePeriodWindow(subscription.startDate, now);
     const counterField = limitType === 'transaction' ? 'transactionsCount' : 'waMessagesCount';
@@ -130,9 +134,14 @@ export async function tryConsumeUsage(
         { upsert: true }
     );
 
-    // Step 2: conditional atomic increment - cuma nempel kalau usage+amount masih <= limit.
+    // Step 2: increment usage. Unlimited -> tanpa syarat (tetep dicatat buat laporan
+    // panel, tapi gak pernah blok). Selain itu -> conditional atomic increment, cuma
+    // nempel kalau usage+amount masih <= limit.
+    const incrementFilter = isUnlimited
+        ? { storeId, periodStart }
+        : { storeId, periodStart, [counterField]: { $lte: effectiveLimit - amount } };
     const updated = await master.TenantUsageCounter.findOneAndUpdate(
-        { storeId, periodStart, [counterField]: { $lte: effectiveLimit - amount } },
+        incrementFilter,
         { $inc: { [counterField]: amount } },
         { new: true }
     );
@@ -148,6 +157,48 @@ export async function tryConsumeUsage(
     }
 
     return { allowed: true, currentUsage: (updated as any)[counterField], limit: effectiveLimit };
+}
+
+/**
+ * Kebalikan tryConsumeUsage: balikin kuota yang UDAH terlanjur di-consume tapi aksinya
+ * akhirnya gagal (mis. invoice gagal ke-commit, WA gagal kekirim). Dipanggil dari path
+ * kegagalan SETELAH consume sukses. Best-effort: SENGAJA swallow error-nya sendiri (cukup
+ * log) — refund gak boleh sampe nggagalin balikan sukses atau nutupin error asli di caller.
+ */
+export async function refundUsage(
+    storeId: string,
+    limitType: 'transaction' | 'wa',
+    amount: number = 1
+): Promise<void> {
+    // Kill-switch: SaaS mati -> tadi juga gak nge-consume apa pun, jadi gak ada yg direfund.
+    if (!isSaasEnabled()) return;
+    if (amount <= 0) return;
+
+    try {
+        const master = await getMasterModels();
+
+        const subscription = await master.TenantSubscription.findOne({
+            storeId,
+            status: 'active',
+            expiresAt: { $gt: new Date() },
+        }).sort({ createdAt: -1 });
+
+        // Gak ada subscription = tadi consume-nya fail-open (gak nambah counter) -> no-op.
+        if (!subscription) return;
+
+        const now = new Date();
+        const { periodStart } = getUsagePeriodWindow(subscription.startDate, now);
+        const counterField = limitType === 'transaction' ? 'transactionsCount' : 'waMessagesCount';
+
+        // Conditional decrement: cuma nempel kalau counter >= amount, jadi mustahil minus.
+        // Kalau counter udah 0 (mis. window keburu roll ke periode baru), filter gak match -> no-op.
+        await master.TenantUsageCounter.findOneAndUpdate(
+            { storeId, periodStart, [counterField]: { $gte: amount } },
+            { $inc: { [counterField]: -amount } }
+        );
+    } catch (err) {
+        console.error(`refundUsage gagal (storeId=${storeId}, type=${limitType}):`, err);
+    }
 }
 
 /**
@@ -176,11 +227,19 @@ export async function checkStaffLimit(
     }
 
     const now = new Date();
-    const effectiveLimit =
-        subscription.planSnapshot.limits.maxStaff + sumActiveAddOns(subscription.activeAddOns, 'staff', now);
+    const baseLimit = subscription.planSnapshot.limits.maxStaff;
+
+    // Limit < 0 = UNLIMITED (konvensi: -1 unlimited, 0 gak boleh ada staff, >0 batas).
+    // Cek dari baseLimit biar add-on gak ngubah -1 jadi finite.
+    if (baseLimit < 0) return { allowed: true, limit: -1 };
+
+    const effectiveLimit = baseLimit + sumActiveAddOns(subscription.activeAddOns, 'staff', now);
 
     const { Staff } = await getTenantModels(storeSlug);
-    const currentCount = await Staff.countDocuments();
+    // Cuma hitung staff AKTIF. Hapus staff = soft-delete (isActive:false, lihat DELETE
+    // app/api/staff/[id]) — tanpa filter ini staff yang udah dihapus tetep kehitung ke
+    // limit dan salah-blokir hire baru (mis. plan max 5, 4 aktif + 2 dihapus = keblok).
+    const currentCount = await Staff.countDocuments({ isActive: true });
 
     if (currentCount >= effectiveLimit) {
         return { allowed: false, reason: 'limit_exceeded', currentUsage: currentCount, limit: effectiveLimit };

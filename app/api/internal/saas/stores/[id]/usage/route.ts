@@ -65,17 +65,30 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         const transactionsCount = counter?.transactionsCount || 0;
         const waMessagesCount = counter?.waMessagesCount || 0;
 
-        // Effective limits (base + add-on)
+        // Effective limits (base + add-on). -1 = unlimited: add-on gak ngubah unlimited
+        // jadi finite (cek base per-limit, samain sama subscriptionEnforcement.ts).
         const baseLimits = subscription.planSnapshot.limits;
+        const effLimit = (base: number, type: string) =>
+            base < 0 ? -1 : base + sumActiveAddOns(subscription.activeAddOns, type, now);
         const effectiveLimits = {
-            maxStaff: baseLimits.maxStaff + sumActiveAddOns(subscription.activeAddOns, 'staff', now),
-            maxTransactionsPerMonth: baseLimits.maxTransactionsPerMonth + sumActiveAddOns(subscription.activeAddOns, 'transaction', now),
-            maxWaMessagesPerMonth: baseLimits.maxWaMessagesPerMonth + sumActiveAddOns(subscription.activeAddOns, 'wa', now),
+            maxStaff: effLimit(baseLimits.maxStaff, 'staff'),
+            maxTransactionsPerMonth: effLimit(baseLimits.maxTransactionsPerMonth, 'transaction'),
+            maxWaMessagesPerMonth: effLimit(baseLimits.maxWaMessagesPerMonth, 'wa'),
         };
 
-        // Staff headcount (live dari tenant DB, bukan counter)
+        // Unlimited (limit < 0): remaining -1 sebagai sentinel, percentage 0. Selain itu normal.
+        const mkUsage = (used: number, limit: number) => ({
+            used,
+            limit,
+            remaining: limit < 0 ? -1 : Math.max(0, limit - used),
+            percentage: limit > 0 ? Math.round((used / limit) * 100) : 0,
+        });
+
+        // Staff headcount (live dari tenant DB, bukan counter). Cuma yang aktif — samain
+        // sama checkStaffLimit biar angka usage konsisten (staff soft-deleted isActive:false
+        // gak kehitung).
         const { Staff } = await getTenantModels(store.slug);
-        const staffCount = await Staff.countDocuments();
+        const staffCount = await Staff.countDocuments({ isActive: true });
 
         const data = {
             storeId: store._id,
@@ -85,30 +98,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             periodStart,
             periodEnd,
             usage: {
-                transactions: {
-                    used: transactionsCount,
-                    limit: effectiveLimits.maxTransactionsPerMonth,
-                    remaining: Math.max(0, effectiveLimits.maxTransactionsPerMonth - transactionsCount),
-                    percentage: effectiveLimits.maxTransactionsPerMonth > 0
-                        ? Math.round((transactionsCount / effectiveLimits.maxTransactionsPerMonth) * 100)
-                        : 0,
-                },
-                waMessages: {
-                    used: waMessagesCount,
-                    limit: effectiveLimits.maxWaMessagesPerMonth,
-                    remaining: Math.max(0, effectiveLimits.maxWaMessagesPerMonth - waMessagesCount),
-                    percentage: effectiveLimits.maxWaMessagesPerMonth > 0
-                        ? Math.round((waMessagesCount / effectiveLimits.maxWaMessagesPerMonth) * 100)
-                        : 0,
-                },
-                staff: {
-                    used: staffCount,
-                    limit: effectiveLimits.maxStaff,
-                    remaining: Math.max(0, effectiveLimits.maxStaff - staffCount),
-                    percentage: effectiveLimits.maxStaff > 0
-                        ? Math.round((staffCount / effectiveLimits.maxStaff) * 100)
-                        : 0,
-                },
+                transactions: mkUsage(transactionsCount, effectiveLimits.maxTransactionsPerMonth),
+                waMessages: mkUsage(waMessagesCount, effectiveLimits.maxWaMessagesPerMonth),
+                staff: mkUsage(staffCount, effectiveLimits.maxStaff),
             },
             activeAddOnsCount: subscription.activeAddOns.filter((a) => new Date(a.expiresAt) > now).length,
         };

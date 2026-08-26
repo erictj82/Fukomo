@@ -1,4 +1,6 @@
-<?php use App\Core\View; use App\Core\Csrf; ?>
+<?php use App\Core\View; use App\Core\Csrf;
+// -1 ditampilkan sebagai ∞ (unlimited); 0 tetap 0 (fitur mati).
+$fmtLim = fn($v) => (int)$v < 0 ? '∞' : (string)(int)$v; ?>
 <div class="content-header px-0 d-flex justify-content-between align-items-center">
   <h1 class="m-0 text-dark">Paket / Plan</h1>
   <a href="/plans/create" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i> Buat Plan</a>
@@ -31,9 +33,9 @@
             </td>
             <td><code><?= View::e($p['code']) ?></code></td>
             <td>
-              <?= (int)($lim['maxStaff'] ?? 0) ?> /
-              <?= (int)($lim['maxTransactionsPerMonth'] ?? 0) ?> /
-              <?= (int)($lim['maxWaMessagesPerMonth'] ?? 0) ?>
+              <?= $fmtLim($lim['maxStaff'] ?? 0) ?> /
+              <?= $fmtLim($lim['maxTransactionsPerMonth'] ?? 0) ?> /
+              <?= $fmtLim($lim['maxWaMessagesPerMonth'] ?? 0) ?>
             </td>
             <td class="text-center"><?= count($p['pricingOptions'] ?? []) ?> opsi</td>
             <td class="text-center"><?= count($p['availableAddOns'] ?? []) ?></td>

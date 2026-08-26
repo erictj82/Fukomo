@@ -91,65 +91,92 @@ export async function approveRegistration(
         subscriptionExpiresAt = new Date(Date.now() + pricingOption.billingPeriodDays * 24 * 60 * 60 * 1000);
     }
 
+    // Store dibuat dengan subscriptionStatus null DULU (belum "active"). Baru di-flip
+    // ke active SETELAH TenantSubscription beneran kebuat (C2) — biar enforcement gak
+    // pernah lihat store "active" yang subscription record-nya belum ada. Kalau ada
+    // langkah yang gagal di bawah, Store + subscription di-rollback (C1) biar gak orphan.
     const newStore = await master.Store.create({
         name: registration.storeName,
         slug: cleanSlug,
         dbUri,
         isActive: true,
-        subscriptionStatus: subscriptionPlan ? 'active' : null,
-        subscriptionExpiresAt: subscriptionExpiresAt,
+        subscriptionStatus: null,
+        subscriptionExpiresAt: null,
     });
 
-    // 3. Create Tenant DB + Super Admin (persis logic lama, gak diubah)
-    const { User, Role } = await getTenantModels(cleanSlug);
-
-    const standardResources = ['appointments', 'pos', 'services', 'products', 'purchases', 'usageLogs', 'staff', 'staffSlots', 'customers', 'suppliers', 'payroll', 'expenses', 'reports', 'users', 'roles', 'invoices', 'activityLogs', 'calendarView'];
-    const allPermissions: any = { dashboard: { view: true }, settings: { view: true, edit: true }, aiReports: { view: true } };
-    standardResources.forEach((resource) => {
-        allPermissions[resource] = { view: 'all', create: true, edit: true, delete: true };
-    });
-
-    const superAdminRole = await Role.findOneAndUpdate(
-        { name: 'Super Admin' },
-        { $setOnInsert: { name: 'Super Admin', description: 'Full access to all system resources', isSystem: true }, $set: { permissions: allPermissions } },
-        { upsert: true, new: true }
-    );
-
-    await User.collection.insertOne({
-        name: registration.ownerName,
-        email: registration.email,
-        password: registration.hashedPassword,
-        role: superAdminRole._id,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        __v: 0,
-    });
-
-    // 4. Update registration status
-    registration.status = 'approved';
-    registration.hashedPassword = 'cleared';
-    await registration.save();
-
-    // 5. Assign TenantSubscription (langkah baru, cuma jalan kalau planId dikasih)
     let subscriptionId: string | undefined;
-    if (subscriptionPlan && pricingOption && subscriptionExpiresAt) {
-        const subscription = await master.TenantSubscription.create({
-            storeId: newStore._id,
-            planId: subscriptionPlan._id,
-            planSnapshot: {
-                name: subscriptionPlan.name,
-                code: subscriptionPlan.code,
-                limits: subscriptionPlan.limits,
-            },
-            billingPeriod: options.billingPeriod,
-            pricePaid: pricingOption.price,
-            status: 'active',
-            startDate: new Date(),
-            expiresAt: subscriptionExpiresAt,
-            activeAddOns: [],
-            autoRenew: true,
+
+    try {
+        // 3. Create Tenant DB + Super Admin (persis logic lama, gak diubah)
+        const { User, Role } = await getTenantModels(cleanSlug);
+
+        const standardResources = ['appointments', 'pos', 'services', 'products', 'purchases', 'usageLogs', 'staff', 'staffSlots', 'customers', 'suppliers', 'payroll', 'expenses', 'reports', 'users', 'roles', 'invoices', 'activityLogs', 'calendarView'];
+        const allPermissions: any = { dashboard: { view: true }, settings: { view: true, edit: true }, aiReports: { view: true } };
+        standardResources.forEach((resource) => {
+            allPermissions[resource] = { view: 'all', create: true, edit: true, delete: true };
         });
-        subscriptionId = subscription._id.toString();
+
+        const superAdminRole = await Role.findOneAndUpdate(
+            { name: 'Super Admin' },
+            { $setOnInsert: { name: 'Super Admin', description: 'Full access to all system resources', isSystem: true }, $set: { permissions: allPermissions } },
+            { upsert: true, new: true }
+        );
+
+        await User.collection.insertOne({
+            name: registration.ownerName,
+            email: registration.email,
+            password: registration.hashedPassword,
+            role: superAdminRole._id,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            __v: 0,
+        });
+
+        // 4. Assign TenantSubscription (langkah baru, cuma jalan kalau planId dikasih),
+        // DIBUAT SEBELUM Store di-flip ke active.
+        if (subscriptionPlan && pricingOption && subscriptionExpiresAt) {
+            const subscription = await master.TenantSubscription.create({
+                storeId: newStore._id,
+                planId: subscriptionPlan._id,
+                planSnapshot: {
+                    name: subscriptionPlan.name,
+                    code: subscriptionPlan.code,
+                    limits: subscriptionPlan.limits,
+                },
+                billingPeriod: options.billingPeriod,
+                pricePaid: pricingOption.price,
+                status: 'active',
+                startDate: new Date(),
+                expiresAt: subscriptionExpiresAt,
+                activeAddOns: [],
+                autoRenew: true,
+            });
+            subscriptionId = subscription._id.toString();
+
+            // 5. Baru sekarang Store boleh "active" — subscription record udah pasti ada (C2).
+            newStore.subscriptionStatus = 'active';
+            newStore.subscriptionExpiresAt = subscriptionExpiresAt;
+            await newStore.save();
+        }
+
+        // 6. Update registration status — PALING AKHIR. Kalau attempt gagal sebelum sini,
+        // registration tetep 'pending' (bisa di-approve ulang) + hashedPassword masih utuh.
+        registration.status = 'approved';
+        registration.hashedPassword = 'cleared';
+        await registration.save();
+    } catch (err) {
+        // Rollback biar gak ninggalin orphan: hapus subscription (kalau terlanjur dibuat)
+        // lalu hapus Store. Tenant DB pakai suffix unik (Date.now) jadi approve ulang bikin
+        // DB baru — stray DB lama dibiarkan (cleanup ops manual, gak nge-block retry).
+        try {
+            if (subscriptionId) {
+                await master.TenantSubscription.deleteOne({ _id: subscriptionId });
+            }
+            await master.Store.deleteOne({ _id: newStore._id });
+        } catch (rollbackErr) {
+            console.error('approveRegistration rollback gagal (butuh cleanup manual):', rollbackErr);
+        }
+        throw err;
     }
 
     // 6. Send WA (persis logic lama - masih langsung ke Fonnte, belum lewat lib/waProvider

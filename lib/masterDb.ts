@@ -5,7 +5,9 @@ import { AdminSettingsSchema, IAdminSettings } from '@/models/AdminSettings';
 import { SaasPlanSchema, ISaasPlan } from '@/models/SaasPlan';
 import { TenantSubscriptionSchema, ITenantSubscription } from '@/models/TenantSubscription';
 import { TenantUsageCounterSchema, ITenantUsageCounter } from '@/models/TenantUsageCounter';
-import { PlatformAdminSchema, IPlatformAdmin, PlatformAdminModel } from '@/models/PlatformAdmin';
+// PlatformAdmin (Mongo) DIHAPUS 2026-08-17: admin panel sekarang full MySQL (saas-panel/).
+// Endpoint /api/internal/saas/admins{,/login} + model Mongo-nya di-retire biar gak ada
+// gudang kredensial admin kedua yang bisa jadi celah. Lihat memory saas-prelaunch-audit (B2).
 
 const getMasterMongoUri = () => process.env.MASTER_MONGODB_URI?.trim();
 
@@ -19,7 +21,6 @@ interface MasterCache {
     SaasPlan: mongoose.Model<ISaasPlan> | null;
     TenantSubscription: mongoose.Model<ITenantSubscription> | null;
     TenantUsageCounter: mongoose.Model<ITenantUsageCounter> | null;
-    PlatformAdmin: PlatformAdminModel | null;
   };
 }
 
@@ -37,7 +38,6 @@ let cached: MasterCache = global.masterMongoose || {
     SaasPlan: null,
     TenantSubscription: null,
     TenantUsageCounter: null,
-    PlatformAdmin: null,
   },
 };
 
@@ -109,9 +109,6 @@ export async function getMasterModels() {
   if (!cached.models.TenantUsageCounter) {
     cached.models.TenantUsageCounter = conn.model<ITenantUsageCounter>('TenantUsageCounter', TenantUsageCounterSchema);
   }
-  if (!cached.models.PlatformAdmin) {
-    cached.models.PlatformAdmin = conn.model<IPlatformAdmin, PlatformAdminModel>('PlatformAdmin', PlatformAdminSchema);
-  }
 
   return {
     Store: cached.models.Store,
@@ -120,6 +117,5 @@ export async function getMasterModels() {
     SaasPlan: cached.models.SaasPlan,
     TenantSubscription: cached.models.TenantSubscription,
     TenantUsageCounter: cached.models.TenantUsageCounter,
-    PlatformAdmin: cached.models.PlatformAdmin,
   };
 }

@@ -5,6 +5,7 @@ import { sendWhatsApp } from '@/lib/fonnte';
 import { getWaProviderConfigForPurpose, sendTemplateViaBalesOtomatis, getBalesOtomatisTemplateId, buildTemplateParameters, extractTemplateVariables, type BalesOtomatisWabaConfig } from '@/lib/waProvider';
 import { addMessageVariation } from '@/lib/messageVariation';
 import { validateMessageContent } from '@/lib/messageValidator';
+import { runDueBackups } from './backup';
 // cronDedup removed — atomic lock via lastRunDate is sufficient
 
 let schedulerStarted = false;
@@ -1083,6 +1084,14 @@ export function startWaScheduler() {
                 await processAutomations();
             } catch (e) {
                 console.error('[SCHEDULER] processAutomations error:', e);
+            }
+            try {
+                const backup = await runDueBackups();
+                if (backup.written.length > 0) {
+                    console.log(`[SCHEDULER] Backup ditulis: ${backup.written.join(', ')}`);
+                }
+            } catch (e) {
+                console.error('[SCHEDULER] runDueBackups error:', e);
             }
         },
         {

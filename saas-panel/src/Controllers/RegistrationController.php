@@ -6,6 +6,7 @@ use App\Core\Auth;
 use App\Core\View;
 use App\Core\Csrf;
 use App\Core\ApiClient;
+use App\Core\Audit;
 
 class RegistrationController
 {
@@ -54,7 +55,7 @@ class RegistrationController
 
     public function approve(string $id): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
         Csrf::check();
 
         $planId = trim((string) ($_POST['planId'] ?? ''));
@@ -79,6 +80,12 @@ class RegistrationController
         }
 
         $d = $res['data'] ?? [];
+        Audit::log('approve_registration', 'registration', $id, [
+            'slug'          => $d['slug'] ?? null,
+            'storeId'       => $d['storeId'] ?? null,
+            'planId'        => $planId,
+            'billingPeriod' => $billingPeriod,
+        ]);
         $_SESSION['flash_success'] = sprintf(
             'Toko "%s" di-approve. Slug: %s. WA konfirmasi dikirim ke owner.',
             $d['storeName'] ?? '-',
@@ -90,7 +97,7 @@ class RegistrationController
 
     public function reject(string $id): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
         Csrf::check();
 
         $reason = trim((string) ($_POST['rejectionReason'] ?? ''));
@@ -103,6 +110,10 @@ class RegistrationController
         $res = (new ApiClient())->post("/api/internal/saas/registrations/$id/reject", [
             'rejectionReason' => $reason,
         ]);
+
+        if ($res['ok']) {
+            Audit::log('reject_registration', 'registration', $id, ['reason' => $reason]);
+        }
 
         $_SESSION[$res['ok'] ? 'flash_success' : 'flash_error'] =
             $res['ok'] ? 'Pendaftaran ditolak. WA notifikasi dikirim ke pendaftar.' : $res['error'];

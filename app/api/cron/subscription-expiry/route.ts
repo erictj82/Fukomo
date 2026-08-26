@@ -19,7 +19,13 @@ export async function GET(request: NextRequest) {
         // Auth cron (pola sama dengan cron WA existing)
         const authHeader = request.headers.get('authorization');
         const cronSecret = process.env.CRON_SECRET;
-        if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+        // Fail-closed: kalau CRON_SECRET belum diset, TOLAK. Sebelumnya `if (cronSecret && ...)` —
+        // kalau secret kosong auth ke-skip total, jadi endpoint tulis publik. Jangan.
+        if (!cronSecret) {
+            console.error('[cron/subscription-expiry] CRON_SECRET belum diset — endpoint ditolak (fail-closed).');
+            return NextResponse.json({ success: false, error: 'Cron belum dikonfigurasi di server.' }, { status: 503 });
+        }
+        if (authHeader !== `Bearer ${cronSecret}`) {
             return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
         }
 

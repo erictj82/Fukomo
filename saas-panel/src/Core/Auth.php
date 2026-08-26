@@ -7,8 +7,10 @@ use App\Core\Db;
 
 class Auth
 {
-    private const MAX_ATTEMPTS = 5;      // per username+ip
+    private const MAX_ATTEMPTS = 5;      // per IP
     private const WINDOW_MINUTES = 15;
+    private const IDLE_TIMEOUT = 1800;   // 30 menit tanpa aktivitas -> auto-logout
+    private const REVALIDATE_EVERY = 60; // detik: interval re-cek is_active/role ke DB
 
     public static function start(): void
     {
@@ -46,6 +48,51 @@ class Auth
             header('Location: /login');
             exit;
         }
+
+        $now = time();
+
+        // Idle timeout — sesi nganggur lebih dari IDLE_TIMEOUT dianggap kadaluarsa.
+        if (isset($_SESSION['last_activity']) && ($now - (int) $_SESSION['last_activity']) > self::IDLE_TIMEOUT) {
+            self::logout();
+            header('Location: /login?expired=1');
+            exit;
+        }
+        $_SESSION['last_activity'] = $now;
+
+        // Re-validate ke DB: admin yang dinonaktifkan / didemote HARUS langsung kehilangan
+        // akses tanpa nunggu logout manual. Cuma dicek pas login itu gak cukup (sesi bisa
+        // hidup berhari-hari). Di-throttle REVALIDATE_EVERY detik biar gak query tiap hit.
+        $lastCheck = (int) ($_SESSION['last_revalidate'] ?? 0);
+        if (($now - $lastCheck) >= self::REVALIDATE_EVERY) {
+            if (!self::revalidate()) {
+                self::logout();
+                header('Location: /login?revoked=1');
+                exit;
+            }
+            $_SESSION['last_revalidate'] = $now;
+        }
+    }
+
+    // Cek ulang admin masih aktif + sinkronin role terbaru dari DB ke session.
+    // Return false kalau admin sudah tidak ada / dinonaktifkan (paksa logout).
+    private static function revalidate(): bool
+    {
+        try {
+            $pdo = Db::connect();
+            $stmt = $pdo->prepare('SELECT is_active, role FROM platform_admins WHERE id = ? LIMIT 1');
+            $stmt->execute([$_SESSION['admin_id']]);
+            $row = $stmt->fetch();
+        } catch (\Throwable $e) {
+            // DB error saat revalidate -> fail-closed (jangan kasih akses dgn data basi).
+            return false;
+        }
+
+        if (!$row || (int) $row['is_active'] !== 1) {
+            return false;
+        }
+        // Role bisa berubah (promote/demote) — refresh biar requireSuperAdmin() akurat.
+        $_SESSION['admin_role'] = $row['role'];
+        return true;
     }
 
     // Guard: super_admin only.
@@ -104,13 +151,17 @@ class Auth
 
     private static function isRateLimited(string $username, string $ip): bool
     {
+        // Hitung kegagalan per-IP saja, BUKAN per-username. Kalau ikut username, penyerang
+        // bisa nembak username korban dari IP mana pun buat ngunci akun korban (lockout-DoS).
+        // Per-IP: brute-force dari 1 IP tetap kejegal, dan attacker cuma bisa ngunci IP-nya
+        // sendiri. Brute-force terdistribusi butuh mitigasi lain (WAF/CAPTCHA — ranah ops).
         $pdo = Db::connect();
         $stmt = $pdo->prepare(
             'SELECT COUNT(*) FROM login_attempts
-             WHERE success = 0 AND (username = ? OR ip = ?)
+             WHERE success = 0 AND ip = ?
              AND created_at > (NOW() - INTERVAL ? MINUTE)'
         );
-        $stmt->execute([$username, $ip, self::WINDOW_MINUTES]);
+        $stmt->execute([$ip, self::WINDOW_MINUTES]);
         return (int) $stmt->fetchColumn() >= self::MAX_ATTEMPTS;
     }
 

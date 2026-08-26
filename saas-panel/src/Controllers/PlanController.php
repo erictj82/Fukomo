@@ -6,6 +6,7 @@ use App\Core\Auth;
 use App\Core\View;
 use App\Core\Csrf;
 use App\Core\ApiClient;
+use App\Core\Audit;
 
 class PlanController
 {
@@ -24,7 +25,7 @@ class PlanController
 
     public function create(): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
         View::render('plans/form', [
             'plan' => null,
             'error' => null,
@@ -33,7 +34,7 @@ class PlanController
 
     public function store(): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
         Csrf::check();
 
         $payload = self::buildPayload($_POST);
@@ -52,6 +53,10 @@ class PlanController
             return;
         }
 
+        Audit::log('create_plan', 'plan', $res['data']['_id'] ?? null, [
+            'code' => $payload['code'],
+            'name' => $payload['name'],
+        ]);
         $_SESSION['flash_success'] = 'Plan berhasil dibuat.';
         header('Location: /plans');
         exit;
@@ -59,7 +64,7 @@ class PlanController
 
     public function edit(string $id): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
 
         $api = new ApiClient();
         $res = $api->get("/api/internal/saas/plans/$id");
@@ -78,7 +83,7 @@ class PlanController
 
     public function update(string $id): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
         Csrf::check();
 
         // code immutable — server juga strip, tapi kita gak kirim biar konsisten.
@@ -101,6 +106,7 @@ class PlanController
             return;
         }
 
+        Audit::log('update_plan', 'plan', $id, ['name' => $payload['name']]);
         $_SESSION['flash_success'] = 'Plan berhasil diperbarui.';
         header('Location: /plans');
         exit;
@@ -108,11 +114,15 @@ class PlanController
 
     public function destroy(string $id): void
     {
-        Auth::requireLogin();
+        Auth::requireSuperAdmin();
         Csrf::check();
 
         $api = new ApiClient();
         $res = $api->delete("/api/internal/saas/plans/$id");
+
+        if ($res['ok']) {
+            Audit::log('delete_plan', 'plan', $id);
+        }
 
         // 409 = masih dipakai subscription aktif → sarankan nonaktifkan.
         $_SESSION[$res['ok'] ? 'flash_success' : 'flash_error'] =

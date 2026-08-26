@@ -107,16 +107,46 @@
       return;
     }
     box.className = '';
-    box.innerHTML = pricing.map(function (po, i) {
-      var label = LABELS[po.billingPeriod] || po.billingPeriod;
-      var disc = po.discountLabel ? ' <span class="badge badge-info">' + po.discountLabel + '</span>' : '';
-      return '<div class="custom-control custom-radio">' +
-        '<input type="radio" class="custom-control-input" name="billingPeriod" ' +
-        'id="bp' + i + '" value="' + po.billingPeriod + '"' + (i === 0 ? ' checked' : '') + ' required>' +
-        '<label class="custom-control-label" for="bp' + i + '">' +
-        label + ' — ' + rupiah(po.price) + ' <small class="text-muted">(' + po.billingPeriodDays + ' hari)</small>' + disc +
-        '</label></div>';
-    }).join('');
+    // Bangun node via DOM API + textContent, JANGAN innerHTML dgn string terinterpolasi.
+    // discountLabel (dan field pricing lain) itu teks bebas yg diinput admin di form Plan —
+    // kalau di-innerHTML mentah, staff bisa nanem <img onerror=...> → XSS eskalasi ke super_admin.
+    box.textContent = '';
+    pricing.forEach(function (po, i) {
+      var wrap = document.createElement('div');
+      wrap.className = 'custom-control custom-radio';
+
+      var input = document.createElement('input');
+      input.type = 'radio';
+      input.className = 'custom-control-input';
+      input.name = 'billingPeriod';
+      input.id = 'bp' + i;
+      input.value = po.billingPeriod;          // property assign = gak di-parse sbg HTML
+      input.required = true;
+      if (i === 0) input.checked = true;
+
+      var label = document.createElement('label');
+      label.className = 'custom-control-label';
+      label.htmlFor = 'bp' + i;
+      var periodLabel = LABELS[po.billingPeriod] || po.billingPeriod;
+      label.appendChild(document.createTextNode(periodLabel + ' — ' + rupiah(po.price) + ' '));
+
+      var days = document.createElement('small');
+      days.className = 'text-muted';
+      days.textContent = '(' + (Number(po.billingPeriodDays) || 0) + ' hari)';
+      label.appendChild(days);
+
+      if (po.discountLabel) {
+        label.appendChild(document.createTextNode(' '));
+        var badge = document.createElement('span');
+        badge.className = 'badge badge-info';
+        badge.textContent = po.discountLabel;  // ← teks murni, tag apa pun jadi literal
+        label.appendChild(badge);
+      }
+
+      wrap.appendChild(input);
+      wrap.appendChild(label);
+      box.appendChild(wrap);
+    });
   }
 
   sel.addEventListener('change', render);

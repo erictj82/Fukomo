@@ -116,9 +116,11 @@ export const SaasPlanSchema = new Schema<ISaasPlan>(
             trim: true,
         },
         limits: {
-            maxStaff: { type: Number, required: true, min: 0 },
-            maxTransactionsPerMonth: { type: Number, required: true, min: 0 },
-            maxWaMessagesPerMonth: { type: Number, required: true, min: 0 },
+            // -1 = unlimited, 0 = fitur mati, >0 = batas beneran. min:-1 supaya sentinel
+            // unlimited kesimpen tapi angka < -1 (gak ada artinya) tetep ditolak.
+            maxStaff: { type: Number, required: true, min: -1 },
+            maxTransactionsPerMonth: { type: Number, required: true, min: -1 },
+            maxWaMessagesPerMonth: { type: Number, required: true, min: -1 },
         },
         pricingOptions: {
             type: [SaasPlanPricingOptionSchema],
