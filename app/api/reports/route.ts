@@ -343,6 +343,67 @@ export async function GET(request: NextRequest, props: any) {
                 };
                 break;
 
+            case "acquisition": {
+                // Marketing funnel: breakdown per sumber akuisisi ("mengetahui dari").
+                // Transaksi & pendapatan dihitung semua; customer UNIK hanya yang punya id
+                // (walk-in tanpa customer tak bisa didedup). Invoice tanpa sumber → "Belum diisi".
+                const acqInvoices = await Invoice.find({
+                    date: { $gte: start, $lte: end },
+                    status: { $nin: ['cancelled', 'voided'] }
+                }).select('acquisitionSource totalAmount customer').lean();
+
+                const acqStats: any = {};
+                acqInvoices.forEach((inv: any) => {
+                    const channel = (inv.acquisitionSource && String(inv.acquisitionSource).trim()) || 'Belum diisi';
+                    if (!acqStats[channel]) {
+                        acqStats[channel] = { channel, transactions: 0, revenue: 0, _customerSet: new Set<string>() };
+                    }
+                    acqStats[channel].transactions += 1;
+                    acqStats[channel].revenue += inv.totalAmount || 0;
+                    if (inv.customer) acqStats[channel]._customerSet.add(String(inv.customer));
+                });
+                data = Object.values(acqStats).map((s: any) => ({
+                    channel: s.channel,
+                    transactions: s.transactions,
+                    customers: s._customerSet.size,
+                    revenue: s.revenue,
+                })).sort((a: any, b: any) => b.revenue - a.revenue);
+                break;
+            }
+
+            case "acquisitionDetail": {
+                // Drill-down: daftar customer untuk 1 channel. Belanja = agregasi Invoice di
+                // rentang tanggal (BUKAN Customer.totalPurchases yang lifetime & tak dikurangi void).
+                const channelParam = searchParams.get("channel") || "";
+                const detailInvoices = await Invoice.find({
+                    date: { $gte: start, $lte: end },
+                    status: { $nin: ['cancelled', 'voided'] }
+                }).select('acquisitionSource totalAmount customer').populate('customer', 'name phone').lean();
+
+                const detailStats: any = {};
+                detailInvoices.forEach((inv: any) => {
+                    const ch = (inv.acquisitionSource && String(inv.acquisitionSource).trim()) || 'Belum diisi';
+                    if (ch !== channelParam) return;
+                    const c: any = inv.customer;
+                    if (c && c._id) {
+                        const id = c._id.toString();
+                        if (!detailStats[id]) {
+                            detailStats[id] = { customerId: id, name: c.name, phone: c.phone, transactions: 0, spent: 0 };
+                        }
+                        detailStats[id].transactions += 1;
+                        detailStats[id].spent += inv.totalAmount || 0;
+                    } else {
+                        if (!detailStats['walk-in']) {
+                            detailStats['walk-in'] = { customerId: null, name: 'Walk-in Customer', phone: '-', transactions: 0, spent: 0 };
+                        }
+                        detailStats['walk-in'].transactions += 1;
+                        detailStats['walk-in'].spent += inv.totalAmount || 0;
+                    }
+                });
+                data = Object.values(detailStats).sort((a: any, b: any) => b.spent - a.spent);
+                break;
+            }
+
             default:
                 return NextResponse.json({ success: false, error: "Invalid report type" }, { status: 400 });
         }

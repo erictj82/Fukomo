@@ -12,7 +12,7 @@ import { scheduleFollowUp } from "@/lib/waFollowUp";
 import { normalizeIndonesianPhone } from "@/lib/phone";
 import { decryptFonnteToken } from '@/lib/encryption';
 import { sendWhatsApp } from "@/lib/fonnte";
-import { getStoreIdBySlug, tryConsumeUsage } from "@/lib/subscriptionEnforcement";
+import { getStoreIdBySlug, tryConsumeUsage, refundUsage } from "@/lib/subscriptionEnforcement";
 
 
 import { auth } from "@/auth";
@@ -88,6 +88,13 @@ export async function POST(request: NextRequest, props: any) {
   const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
   const { Invoice, Customer, Product, Service, Settings, CashBalance, CashLog, WalletTransaction, LoyaltyTransaction, Voucher, StockLog, Deposit, Appointment } = await getTenantModels(tenantSlug);
 
+  // A4 refund-guard: diangkat ke luar try biar finally bisa akses. Kuota transaksi
+  // di-consume lebih awal (sebelum validasi & create invoice), jadi kalau checkout gagal
+  // SEBELUM invoice ke-commit, kuotanya harus dibalikin di finally biar gak kepotong sia-sia.
+  let storeId: string | null = null;
+  let usageConsumed = false;
+  let usageCommitted = false;
+
   try {
 
 
@@ -100,7 +107,7 @@ export async function POST(request: NextRequest, props: any) {
     // Behavior sesuai keputusan client: kalau limit transaksi bulan ini kelampauan,
     // transaksi BARU diblok total (bukan warning) - frontend POS perlu nangkep
     // error.code === 'TRANSACTION_LIMIT_EXCEEDED' ini dan arahin ke halaman upgrade/add-on.
-    const storeId = await getStoreIdBySlug(tenantSlug);
+    storeId = await getStoreIdBySlug(tenantSlug);
     if (storeId) {
         const usageCheck = await tryConsumeUsage(storeId, 'transaction', 1);
         if (!usageCheck.allowed) {
@@ -118,6 +125,7 @@ export async function POST(request: NextRequest, props: any) {
                 { status: 403 }
             );
         }
+        usageConsumed = true; // kuota transaksi udah kepotong 1 di titik ini
     }
     // storeId null berarti tenant ini belum ke-link ke Store manapun (kondisi ganjil/legacy) -
     // sengaja TIDAK diblokir daripada nge-lockout toko yang datanya belum lengkap.
@@ -347,6 +355,12 @@ export async function POST(request: NextRequest, props: any) {
         });
       }
     }
+
+    // Sampai titik ini invoice udah ke-commit & lolos self-rollback wallet/points di atas
+    // (satu-satunya path yg ngehapus invoice lagi). Tandai kuota "committed" biar finally
+    // gak nge-refund transaksi yg sebenernya sukses. Sisa di bawah (deposit, cash drawer,
+    // WA, log) itu side-effect best-effort — gagal di situ gak ngebatalin invoice.
+    usageCommitted = true;
 
     // --- ATOMIC DEPOSIT RECORD CREATION & APPOINTMENT COMPLETION ---
     if (invoice.status === "paid" || invoice.status === "partially_paid") {
@@ -751,6 +765,15 @@ export async function POST(request: NextRequest, props: any) {
       { success: false, error: "Failed to create invoice" },
       { status: 500 },
     );
+  } finally {
+    // A4: kalau kuota kepotong tapi invoice GAK jadi ke-commit (throw di tengah sebelum
+    // usageCommitted, atau return path error LEWAT DARI titik consume — perhatikan: tiap
+    // return sebelum invoice.create mesti juga gak mau di-refund, dan semua return SETELAH
+    // usageCommitted gak di-refund). Best-effort: refundUsage gak akan nglempar. Ini hanya
+    // jalan kalau SAAS_ENABLED aktif; kalau mati, consume tadi ga jalan juga, jadi no-op.
+    if (storeId && usageConsumed && !usageCommitted) {
+      await refundUsage(storeId, 'transaction', 1);
+    }
   }
 }
 

@@ -304,6 +304,10 @@ export default function POSPage() {
   
   // New States for Redesign
   const [medicalNotes, setMedicalNotes] = useState("");
+  // "Mengetahui dari" (acquisition source / marketing funnel). Wajib diisi kalau
+  // owner sudah mengonfigurasi daftar di Settings.acquisitionSources; kalau daftar
+  // kosong, field ini disembunyikan & tidak diwajibkan (fitur opt-in per tenant).
+  const [acquisitionSource, setAcquisitionSource] = useState("");
   const [isMedicalNotesModalOpen, setIsMedicalNotesModalOpen] = useState(false);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
   const [isManualServiceModalOpen, setIsManualServiceModalOpen] = useState(false);
@@ -1580,6 +1584,7 @@ export default function POSPage() {
     setReferralCode("");
     setReferralValidated(null);
     setMedicalNotes("");
+    setAcquisitionSource("");
   };
 
   const {
@@ -1740,6 +1745,12 @@ export default function POSPage() {
     }
     if (cart.length === 0) {
       alert("Keranjang masih kosong");
+      return;
+    }
+    // "Mengetahui dari" wajib — HANYA kalau owner sudah mengisi daftar sumber di Settings.
+    // Daftar kosong = fitur mati, tak memblokir transaksi tenant yang belum pakai fitur ini.
+    if ((settings.acquisitionSources?.length ?? 0) > 0 && !acquisitionSource) {
+      alert("Field 'Mengetahui dari' wajib diisi!");
       return;
     }
     const serviceItems = cart.filter((item) => item.type === "Service");
@@ -2296,6 +2307,7 @@ export default function POSPage() {
           voucher: voucherApplied?.discountAmount || 0
         },
         medicalNotes: medicalNotes.trim() || undefined,
+        acquisitionSource: acquisitionSource || undefined,
         packageUsage: cart.filter(item => item.type === "Service" && packageClaims[getCartItemKey(item._id, item.type)]?.enabled).map(item => {
           const claim = packageClaims[getCartItemKey(item._id, item.type)];
           const pkg = customerPackages.find(p => p._id === claim.customerPackageId);
@@ -3687,6 +3699,27 @@ export default function POSPage() {
             {/* Voucher & Loyalty here if needed */}
           </div>
 
+          {(settings.acquisitionSources?.length ?? 0) > 0 && (
+            <div className="space-y-2 pt-3 border-t-2 border-dashed border-gray-300">
+              <h3 className="font-black text-gray-800 text-sm border-b pb-1">
+                Mengetahui Dari <span className="text-red-500">*</span>
+              </h3>
+              <select
+                value={acquisitionSource}
+                onChange={(e) => setAcquisitionSource(e.target.value)}
+                className={`w-full text-xs font-bold border rounded px-2 py-2 focus:ring-1 outline-none ${acquisitionSource ? "border-gray-300 focus:ring-blue-900" : "border-red-300 focus:ring-red-500"}`}
+              >
+                <option value="" disabled>Pilih sumber... (Wajib)</option>
+                {(settings.acquisitionSources || []).map((src) => (
+                  <option key={src} value={src}>{src}</option>
+                ))}
+              </select>
+              {!acquisitionSource && (
+                <p className="text-[10px] text-red-500 font-semibold">Wajib dipilih sebelum menyelesaikan transaksi.</p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-3 pt-3 border-t-2 border-dashed border-gray-300">
             <h3 className="font-black text-gray-800 text-sm border-b pb-1">Payment Method</h3>
             
@@ -3753,7 +3786,7 @@ export default function POSPage() {
             <FormButton
               onClick={() => void handleCheckout(true)}
               loading={submitting}
-              disabled={hasInvalidSplitInCart || cart.length === 0 || !splitPayments.some(p => !!p.method) || (discount > 0 && !discountReason.trim()) || totalSplitPaidComputed < total}
+              disabled={hasInvalidSplitInCart || cart.length === 0 || !splitPayments.some(p => !!p.method) || (discount > 0 && !discountReason.trim()) || ((settings.acquisitionSources?.length ?? 0) > 0 && !acquisitionSource) || totalSplitPaidComputed < total}
               variant="success"
               className="flex-[2] py-3 text-sm font-black uppercase tracking-widest shadow-lg rounded-xl"
               icon={<CreditCard className="w-5 h-5" />}

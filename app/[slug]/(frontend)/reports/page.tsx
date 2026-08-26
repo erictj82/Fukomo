@@ -38,7 +38,7 @@ import { getCurrentDateInTimezone, getMonthDateRangeInTimezone } from "@/lib/dat
 import { useSession } from "next-auth/react";
 import { useTenantRouter } from "@/hooks/useTenantRouter";
 
-type ReportType = 'summary' | 'sales' | 'custom-sales' | 'services' | 'products' | 'staff' | 'customers' | 'inventory' | 'expenses' | 'profit' | 'daily' | 'activity-log' | 'wallet';
+type ReportType = 'summary' | 'sales' | 'custom-sales' | 'services' | 'products' | 'staff' | 'customers' | 'acquisition' | 'inventory' | 'expenses' | 'profit' | 'daily' | 'activity-log' | 'wallet';
 
 export default function ReportsPage() {
   const params = useParams();
@@ -134,6 +134,11 @@ export default function ReportsPage() {
     const [spenderHistory, setSpenderHistory] = useState<any[]>([]);
     const [spenderLoading, setSpenderLoading] = useState(false);
 
+    // Channel drill-down modal (for Sumber Pelanggan / acquisition report)
+    const [channelDetail, setChannelDetail] = useState<string | null>(null);
+    const [channelDetailRows, setChannelDetailRows] = useState<any[]>([]);
+    const [channelDetailLoading, setChannelDetailLoading] = useState(false);
+
     // Role-based check: is current user Kasir?
     const userRole = (session as any)?.user?.role;
     const isKasir = typeof userRole === 'string'
@@ -175,6 +180,7 @@ export default function ReportsPage() {
         { id: 'services', label: 'Service Analytics', icon: Scissors },
         { id: 'products', label: 'Product Analytics', icon: Package },
         { id: 'customers', label: 'Top Spenders', icon: Users },
+        { id: 'acquisition', label: 'Sumber Pelanggan', icon: PieChart },
         { id: 'inventory', label: 'Inventory Level', icon: Package },
         { id: 'daily', label: 'Daily Closing', icon: Clock },
         ...(isKasir ? [] : [{ id: 'staff' as ReportType, label: 'Staff Performance', icon: Users }]),
@@ -306,6 +312,18 @@ export default function ReportsPage() {
             const data = await res.json();
             setSpenderHistory(data.success ? data.data : []);
         } catch { setSpenderHistory([]); } finally { setSpenderLoading(false); }
+    };
+
+    // Drill-down "Sumber Pelanggan": daftar customer + belanja (rentang tanggal aktif) untuk 1 channel.
+    const openChannelDetail = async (channel: string) => {
+        setChannelDetail(channel);
+        setChannelDetailLoading(true);
+        setChannelDetailRows([]);
+        try {
+            const res = await fetch(`/api/reports?type=acquisitionDetail&channel=${encodeURIComponent(channel)}&startDate=${dateRange.start}&endDate=${dateRange.end}`, { headers: { "x-store-slug": slug } });
+            const data = await res.json();
+            setChannelDetailRows(data.success ? data.data : []);
+        } catch { setChannelDetailRows([]); } finally { setChannelDetailLoading(false); }
     };
 
     const formatSafeDate = (date: any, formatStr: string = "dd MMM yyyy") => {
@@ -470,6 +488,13 @@ export default function ReportsPage() {
                 'Phone': s.phone || '-',
                 'Total Spending': s.spending,
                 'Transactions': s.transactions,
+            }));
+        } else if (activeTab === 'acquisition') {
+            exportData = (Array.isArray(reportData) ? reportData : []).map((r: any) => ({
+                'Sumber': r.channel,
+                'Jumlah Transaksi': r.transactions,
+                'Jumlah Customer': r.customers,
+                'Total Pendapatan': r.revenue
             }));
         } else if (activeTab === 'profit') {
             exportData = [{
@@ -1081,6 +1106,67 @@ export default function ReportsPage() {
                                     </div>
                                     <div className="px-6 py-3 border-t border-gray-100 text-xs text-gray-500 shrink-0">
                                         Total: {spenderHistory.length} invoice(s) | {formatCurrency(spenderHistory.reduce((s: number, inv: any) => s + (inv.totalAmount || 0), 0))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            case 'acquisition':
+                if (!Array.isArray(reportData)) return null;
+                return (
+                    <div className="space-y-4">
+                        {renderTable(
+                            ['Sumber', 'Jumlah Transaksi', 'Jumlah Customer', 'Total Pendapatan'],
+                            reportData.map((r: any) => ({
+                                channel: <button onClick={() => openChannelDetail(r.channel)} className="text-blue-700 hover:text-blue-900 underline underline-offset-2 font-bold cursor-pointer">{r.channel}</button>,
+                                transactions: r.transactions || 0,
+                                customers: r.customers || 0,
+                                revenue: formatCurrency(r.revenue || 0),
+                            }))
+                        )}
+                        <p className="text-xs text-gray-400 px-1">Jumlah Customer hanya menghitung pelanggan terdaftar (walk-in tanpa data tidak terhitung unik, tapi tetap masuk pendapatan). Klik nama sumber untuk lihat daftar customer-nya.</p>
+
+                        {/* Channel Customer Detail Modal */}
+                        {channelDetail && (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { setChannelDetail(null); setChannelDetailRows([]); }}>
+                                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+                                        <div>
+                                            <h3 className="text-lg font-black text-gray-900">Customer dari — {channelDetail}</h3>
+                                            <p className="text-xs text-gray-500">Periode {formatSafeDate(dateRange.start)} — {formatSafeDate(dateRange.end)}</p>
+                                        </div>
+                                        <button onClick={() => { setChannelDetail(null); setChannelDetailRows([]); }} className="p-2 rounded-lg hover:bg-gray-100"><X className="w-5 h-5" /></button>
+                                    </div>
+                                    <div className="flex-1 overflow-auto p-6">
+                                        {channelDetailLoading ? (
+                                            <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-900 border-t-transparent" /></div>
+                                        ) : channelDetailRows.length === 0 ? (
+                                            <div className="text-center text-gray-400 py-20 text-sm">Tidak ada customer untuk sumber ini</div>
+                                        ) : (
+                                            <table className="min-w-full text-left whitespace-nowrap text-sm">
+                                                <thead><tr className="bg-gray-50 border-b"><th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Customer</th><th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Telepon</th><th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Transaksi</th><th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Belanja (Periode)</th></tr></thead>
+                                                <tbody className="divide-y divide-gray-50">
+                                                    {channelDetailRows.map((c: any, idx: number) => (
+                                                        <tr key={c.customerId || `walkin-${idx}`} className="hover:bg-gray-50/50">
+                                                            <td className="px-4 py-3 font-bold">
+                                                                {c.customerId ? (
+                                                                    <button onClick={() => router.push(`/customers/${c.customerId}`)} className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer">{c.name}</button>
+                                                                ) : (
+                                                                    <span className="text-gray-700">{c.name}</span>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-gray-600">{c.phone || '-'}</td>
+                                                            <td className="px-4 py-3 text-gray-600">{c.transactions}</td>
+                                                            <td className="px-4 py-3 font-bold text-green-700">{formatCurrency(c.spent)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                    <div className="px-6 py-3 border-t border-gray-100 text-xs text-gray-500 shrink-0">
+                                        Total: {channelDetailRows.length} customer | {formatCurrency(channelDetailRows.reduce((s: number, c: any) => s + (c.spent || 0), 0))}
                                     </div>
                                 </div>
                             </div>
