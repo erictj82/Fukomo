@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission } from '@/lib/rbac';
 import { logActivity } from '@/lib/logger';
-import { getTenantModels } from '@/lib/tenantDb';
+import { generateBackupObject } from '@/lib/backup';
 
 export async function GET(request: NextRequest, props: any) {
     try {
@@ -10,14 +10,7 @@ export async function GET(request: NextRequest, props: any) {
         if (permissionError) return permissionError;
 
         const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-        const models = await getTenantModels(tenantSlug);
-
-        const backupData: any = {};
-
-        // Loop through all models and fetch data
-        for (const [name, model] of Object.entries(models)) {
-            backupData[name] = await (model as any).find({});
-        }
+        const backupData = await generateBackupObject(tenantSlug);
 
         // Log Activity
         await logActivity({
