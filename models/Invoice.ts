@@ -58,6 +58,10 @@ export interface IInvoice extends Document {
   medicalNotes?: string;
   followUpPhoneNumber?: string;
   sourceType: "normal_sale" | "package_redeem" | "package_purchase" | "membership_purchase";
+  // Sumber akuisisi / "mengetahui dari" (marketing funnel). Snapshot teks bebas
+  // dari daftar Settings.acquisitionSources. Optional: jalur non-POS & data lama
+  // tak mengisi ini (masuk bucket "Belum diisi" di report).
+  acquisitionSource?: string;
   date: Date;
   discountBreakdown?: {
     manual: number;
@@ -72,6 +76,16 @@ export interface IInvoice extends Document {
     usedQuantity: number;
     remainingQuota: number;
     expiryDate?: Date;
+  }[];
+  // Reprint control (anti-kecurangan cetak ulang nota)
+  printCount?: number;
+  firstPrintedAt?: Date;
+  lastPrintedAt?: Date;
+  reprintLogs?: {
+    at: Date;
+    byId?: string;
+    byName?: string;
+    method?: string;
   }[];
 }
 
@@ -107,8 +121,12 @@ const hasValidTotalPercentage = (assignments: any[] = []): boolean => {
   return Math.abs(total - 100) <= ALLOWED_SPLIT_ERROR;
 };
 
-const hasPositivePercentages = (assignments: any[] = []): boolean => {
-  return assignments.every((entry) => normalizedPercentage(entry) > 0);
+// Porsi 0% diperbolehkan: staff yang mengerjakan service komisi 0 / harga 0
+// (gratis/bundle/manual) ikut tercatat di split walau proporsi komisinya 0.
+// Hanya porsi NEGATIF yang ditolak. Total tetap wajib 100% (lihat
+// hasValidTotalPercentage) sehingga tidak mungkin semua porsi 0.
+const hasNoNegativePercentages = (assignments: any[] = []): boolean => {
+  return assignments.every((entry) => normalizedPercentage(entry) >= 0);
 };
 
 const invoiceSchema = new Schema<IInvoice>(
@@ -202,6 +220,7 @@ const invoiceSchema = new Schema<IInvoice>(
       enum: ["normal_sale", "package_redeem", "package_purchase", "membership_purchase"],
       default: "normal_sale",
     },
+    acquisitionSource: { type: String, trim: true, default: "" },
     date: { type: Date, default: Date.now },
     discountBreakdown: {
       manual: { type: Number, default: 0 },
@@ -219,6 +238,20 @@ const invoiceSchema = new Schema<IInvoice>(
         expiryDate: Date,
       }
     ],
+    // Reprint control (anti-kecurangan): cetak PERTAMA gratis, cetak ULANG butuh
+    // Settings.reprintInvoicePassword. printCount naik tiap print; reprintLogs = jejak
+    // siapa/kapan/metode cetak ulang. Enforcement di /api/invoices/[id]/reprint.
+    printCount: { type: Number, default: 0 },
+    firstPrintedAt: { type: Date },
+    lastPrintedAt: { type: Date },
+    reprintLogs: [
+      {
+        at: { type: Date, default: Date.now },
+        byId: { type: String },
+        byName: { type: String },
+        method: { type: String },
+      },
+    ],
   },
   { timestamps: true },
 );
@@ -227,11 +260,11 @@ invoiceSchema.path("staffAssignments").validate({
   validator(value: any[] = []) {
     if (!Array.isArray(value)) return false;
     if (hasDuplicateStaff(value)) return false;
-    if (!hasPositivePercentages(value)) return false;
+    if (!hasNoNegativePercentages(value)) return false;
     return hasValidTotalPercentage(value);
   },
   message:
-    "staffAssignments must not contain duplicate staff, each percentage must be greater than 0, and total percentage must equal 100",
+    "staffAssignments must not contain duplicate staff, each percentage must be zero or positive, and total percentage must equal 100",
 });
 
 invoiceSchema.path("items").validate({
@@ -242,12 +275,12 @@ invoiceSchema.path("items").validate({
       const assignments = item?.staffAssignments || [];
       if (!Array.isArray(assignments) || assignments.length === 0) return true;
       if (hasDuplicateStaff(assignments)) return false;
-      if (!hasPositivePercentages(assignments)) return false;
+      if (!hasNoNegativePercentages(assignments)) return false;
       return hasValidTotalPercentage(assignments);
     });
   },
   message:
-    "Service item staff split must not contain duplicate staff, each percentage must be greater than 0, and total percentage must equal 100",
+    "Service item staff split must not contain duplicate staff, each percentage must be zero or positive, and total percentage must equal 100",
 });
 
 invoiceSchema.pre("validate", function preValidate() {

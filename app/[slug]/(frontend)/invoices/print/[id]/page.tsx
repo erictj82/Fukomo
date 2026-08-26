@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useTenantRouter } from "@/hooks/useTenantRouter";
 import { format } from "date-fns";
-import { Printer, ArrowLeft, Scissors } from "lucide-react";
+import { Printer, ArrowLeft, Scissors, Lock } from "lucide-react";
 import { FormButton } from "@/components/dashboard/FormInput";
 import { getCurrencySymbol } from "@/lib/currency";
 import { QRCodeSVG } from "qrcode.react";
@@ -24,22 +24,37 @@ export default function PrintInvoicePage() {
     const [sendingWa, setSendingWa] = useState(false);
     const [sendingWaManual, setSendingWaManual] = useState(false);
     const [printing, setPrinting] = useState(false);
+    // Reprint gate state (anti-kecurangan cetak ulang nota)
+    const [reprintLocked, setReprintLocked] = useState(false);
+    const [printRecorded, setPrintRecorded] = useState(false);
+    const [pwInput, setPwInput] = useState("");
+    const [unlocking, setUnlocking] = useState(false);
+    const [pwError, setPwError] = useState("");
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [invRes, settingsRes, depositsRes] = await Promise.all([
+                const [invRes, settingsRes, depositsRes, reprintRes] = await Promise.all([
                     fetch(`/api/invoices/${id}`, { headers: { "x-store-slug": slug } }),
                     fetch("/api/settings", { headers: { "x-store-slug": slug } }),
-                    fetch(`/api/deposits?invoiceId=${id}`, { headers: { "x-store-slug": slug } })
+                    fetch(`/api/deposits?invoiceId=${id}`, { headers: { "x-store-slug": slug } }),
+                    fetch(`/api/invoices/${id}/reprint`, { headers: { "x-store-slug": slug } })
                 ]);
                 const invData = await invRes.json();
                 const settingsData = await settingsRes.json();
                 const depositsData = await depositsRes.json();
+                const reprintData = await reprintRes.json().catch(() => ({}));
 
                 if (invData.success) setInvoice(invData.data);
                 if (settingsData.success) setSettings(settingsData.data);
                 if (depositsData.success) setDeposits(depositsData.data);
+
+                // Reprint gate: nota yang sudah pernah dicetak + password di-set → kunci di balik overlay.
+                // printRecorded=true kalau sudah pernah dicetak (biar tombol Print gak nge-POST catatan lagi).
+                if (reprintData?.success) {
+                    setReprintLocked(!!reprintData.requiresPassword);
+                    setPrintRecorded((reprintData.printCount || 0) > 0);
+                }
             } catch (error) {
                 console.error("Error fetching print data:", error);
             } finally {
@@ -49,8 +64,48 @@ export default function PrintInvoicePage() {
         fetchData();
     }, [id]);
 
+    // Catat cetak PERTAMA (fire-and-forget, jangan blok window.print biar struk langsung keluar).
+    // Kalau nota sudah pernah dicetak (printRecorded) atau lagi terkunci, jangan kirim apa-apa —
+    // pencatatan cetak ulang ditangani lewat handleUnlock.
+    const recordPrintIfNeeded = (method: string) => {
+        if (printRecorded || reprintLocked) return;
+        setPrintRecorded(true);
+        fetch(`/api/invoices/${id}/reprint`, {
+            method: "POST",
+            headers: { "x-store-slug": slug, "Content-Type": "application/json" },
+            body: JSON.stringify({ password: "", method }),
+        }).catch((e) => console.error("Gagal mencatat cetak:", e));
+    };
+
     const handlePrint = () => {
+        recordPrintIfNeeded("browser");
         window.print();
+    };
+
+    const handleUnlock = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setUnlocking(true);
+        setPwError("");
+        try {
+            const res = await fetch(`/api/invoices/${id}/reprint`, {
+                method: "POST",
+                headers: { "x-store-slug": slug, "Content-Type": "application/json" },
+                body: JSON.stringify({ password: pwInput, method: "reprint" }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setReprintLocked(false);
+                setPrintRecorded(true);
+                setPwInput("");
+            } else {
+                setPwError(data.error || "Password cetak ulang salah.");
+            }
+        } catch (err) {
+            console.error(err);
+            setPwError("Terjadi kesalahan. Coba lagi.");
+        } finally {
+            setUnlocking(false);
+        }
     };
 
     const handleSendWaManual = async () => {
@@ -103,6 +158,7 @@ export default function PrintInvoicePage() {
             }
 
             setPrinting(true);
+            recordPrintIfNeeded("bluetooth");
 
             // 1. Fetch formatted receipt binary from server thermal API
             const thermalRes = await fetch(`/api/invoices/${id}/thermal?width=80`, {
@@ -168,6 +224,54 @@ export default function PrintInvoicePage() {
 
     if (loading) return <div className="p-8 text-center">Loading receipt...</div>;
     if (!invoice) return <div className="p-8 text-center text-red-500">Invoice not found</div>;
+
+    // Nota sudah pernah dicetak & password cetak ulang di-set → sembunyikan struk di balik overlay.
+    // Struk TIDAK di-render sama sekali di sini, jadi Ctrl+P pun cuma dapat overlay ini (bukan nota).
+    if (reprintLocked) {
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 text-black">
+                <div className="max-w-sm w-full bg-white rounded-2xl shadow-xl p-6 border-t-8 border-amber-500">
+                    <div className="flex flex-col items-center text-center gap-2 mb-5">
+                        <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center">
+                            <Lock className="w-7 h-7 text-amber-500" />
+                        </div>
+                        <h1 className="text-lg font-bold text-gray-900">Nota Sudah Pernah Dicetak</h1>
+                        <p className="text-sm text-gray-500">
+                            Nota <span className="font-bold">{invoice.invoiceNumber}</span> sudah pernah dicetak.
+                            Untuk mencetak ulang, masukkan password. Aktivitas ini akan dicatat (siapa &amp; kapan).
+                        </p>
+                    </div>
+                    <form onSubmit={handleUnlock} className="space-y-3">
+                        <input
+                            type="password"
+                            value={pwInput}
+                            onChange={(e) => setPwInput(e.target.value)}
+                            placeholder="Password cetak ulang..."
+                            autoFocus
+                            className="w-full px-4 py-2.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none"
+                        />
+                        {pwError && <p className="text-xs text-red-600 font-medium">{pwError}</p>}
+                        <div className="flex gap-2 pt-1">
+                            <button
+                                type="button"
+                                onClick={() => router.back()}
+                                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={unlocking}
+                                className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-lg transition-colors disabled:opacity-60"
+                            >
+                                {unlocking ? "Memeriksa..." : "Buka Nota"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
 
     const currencySymbol = getCurrencySymbol(settings?.currency || 'IDR');
 
