@@ -46,7 +46,7 @@ describe('Service Packages API', () => {
       const models = await getTenantModels('test-tenant');
 
       const mockPackages = [{ _id: '1', name: 'Pack A' }];
-      const sortMock = vi.fn().mockResolvedValue(mockPackages);
+      const sortMock = vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(mockPackages) });
       const populateMock = vi.fn().mockReturnValue({ sort: sortMock });
       (models.ServicePackage.find as any).mockReturnValue({ populate: populateMock });
 
@@ -67,7 +67,7 @@ describe('Service Packages API', () => {
       const { getTenantModels } = await import('@/lib/tenantDb');
       const models = await getTenantModels('test-tenant');
 
-      const sortMock = vi.fn().mockResolvedValue([]);
+      const sortMock = vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue([]) });
       const populateMock = vi.fn().mockReturnValue({ sort: sortMock });
       (models.ServicePackage.find as any).mockReturnValue({ populate: populateMock });
 

@@ -10,13 +10,20 @@ vi.mock('@/lib/tenantDb', () => ({
       create: vi.fn(),
     },
     CustomerPackage: {},
+    Counter: {
+      findOneAndUpdate: vi.fn().mockResolvedValue({ seq: 1 }),
+    },
   }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
-  getViewScope: vi.fn().mockResolvedValue('all'),
-}));
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+    getViewScope: vi.fn().mockResolvedValue('all'),
+  };
+});
 
 vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'test-user-id' } }),

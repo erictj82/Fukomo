@@ -26,57 +26,51 @@ describe('Phase 1 Cross-Permission Fixes - Dedicated List Endpoints', () => {
 
     mockCheckPermission = checkPermission as any;
 
+    // Chain terminal object is BOTH awaitable (routes that await .sort()
+    // directly) AND exposes .lean() (routes that call .sort().lean()). It also
+    // supports .select() and .populate() in any order to match each route.
+    const chain = (arr: any): any => ({
+      select: () => chain(arr),
+      sort: () => chain(arr),
+      populate: () => chain(arr),
+      lean: () => Promise.resolve(arr),
+      then: (resolve: any, reject: any) => Promise.resolve(arr).then(resolve, reject),
+    });
+
     // Setup mock models
     mockModels = {
       Service: {
-        find: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            sort: vi.fn().mockResolvedValue([
-              { _id: '1', name: 'Haircut', price: 50000, duration: 30 },
-              { _id: '2', name: 'Massage', price: 100000, duration: 60 },
-            ]),
-          }),
-        }),
+        find: vi.fn().mockReturnValue(chain([
+          { _id: '1', name: 'Haircut', price: 50000, duration: 30 },
+          { _id: '2', name: 'Massage', price: 100000, duration: 60 },
+        ])),
       },
       Product: {
-        find: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            sort: vi.fn().mockResolvedValue([
-              { _id: '1', name: 'Shampoo', price: 25000, stock: 50 },
-              { _id: '2', name: 'Conditioner', price: 30000, stock: 40 },
-            ]),
-          }),
-        }),
+        find: vi.fn().mockReturnValue(chain([
+          { _id: '1', name: 'Shampoo', price: 25000, stock: 50 },
+          { _id: '2', name: 'Conditioner', price: 30000, stock: 40 },
+        ])),
       },
       Customer: {
-        find: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            sort: vi.fn().mockResolvedValue([
-              { _id: '1', name: 'John Doe', phone: '081234567890' },
-              { _id: '2', name: 'Jane Smith', phone: '081234567891' },
-            ]),
-          }),
-        }),
+        find: vi.fn().mockReturnValue(chain([
+          { _id: '1', name: 'John Doe', phone: '081234567890' },
+          { _id: '2', name: 'Jane Smith', phone: '081234567891' },
+        ])),
+      },
+      CustomerPackage: {
+        find: vi.fn().mockReturnValue(chain([])),
       },
       Staff: {
-        find: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            sort: vi.fn().mockResolvedValue([
-              { _id: '1', name: 'Staff A', position: 'Stylist' },
-              { _id: '2', name: 'Staff B', position: 'Therapist' },
-            ]),
-          }),
-        }),
+        find: vi.fn().mockReturnValue(chain([
+          { _id: '1', name: 'Staff A', position: 'Stylist' },
+          { _id: '2', name: 'Staff B', position: 'Therapist' },
+        ])),
       },
       Supplier: {
-        find: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({
-            sort: vi.fn().mockResolvedValue([
-              { _id: '1', name: 'Supplier A', phone: '081234567892' },
-              { _id: '2', name: 'Supplier B', phone: '081234567893' },
-            ]),
-          }),
-        }),
+        find: vi.fn().mockReturnValue(chain([
+          { _id: '1', name: 'Supplier A', phone: '081234567892' },
+          { _id: '2', name: 'Supplier B', phone: '081234567893' },
+        ])),
       },
     };
 
@@ -132,7 +126,9 @@ describe('Phase 1 Cross-Permission Fixes - Dedicated List Endpoints', () => {
 
         await GET(req);
 
-        expect(mockModels.Service.find).toHaveBeenCalledWith({ isActive: true });
+        // Service model uses a `status` enum ('active'|'inactive'), not an isActive boolean —
+        // matches app/api/services/route.ts and the Service schema.
+        expect(mockModels.Service.find).toHaveBeenCalledWith({ status: 'active' });
       });
     });
 

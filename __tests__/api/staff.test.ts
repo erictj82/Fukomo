@@ -19,8 +19,21 @@ vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'test-user-id' } }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+  };
+});
+
+// POST /api/staff now runs SaaS plan enforcement (getStoreIdBySlug + checkStaffLimit),
+// which internally hit the master DB via getMasterModels(). Mock the module so the
+// staff route is tested in isolation: no master store -> enforcement is skipped and
+// staff creation proceeds (matches non-SaaS default behavior).
+vi.mock('@/lib/subscriptionEnforcement', () => ({
+  getStoreIdBySlug: vi.fn().mockResolvedValue(null),
+  checkStaffLimit: vi.fn().mockResolvedValue({ allowed: true }),
 }));
 
 describe('Staff API', () => {

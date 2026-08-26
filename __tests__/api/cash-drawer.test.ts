@@ -22,13 +22,22 @@ vi.mock('@/lib/tenantDb', () => ({
     },
     User: {
       find: vi.fn(),
+    },
+    // transfer route reads owner-authorization passwords from Settings before the User fallback
+    Settings: {
+      findOne: vi.fn(),
     }
   }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
-}));
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    // transfer route migrated to checkPermissionWithSession (B14) — 1 auth() call, returns { error, session }
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+  };
+});
 
 vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'u1' } }),
@@ -192,8 +201,11 @@ describe('Cash Drawer APIs', () => {
       const models = await getTenantModels('test-tenant');
 
       const mockAdmin = { role: { name: 'Owner' }, comparePassword: vi.fn().mockResolvedValue(false) };
+      // route chain: User.find({}).select('+password').populate('role')
       (models.User.find as any).mockReturnValue({
-        populate: vi.fn().mockResolvedValue([mockAdmin])
+        select: vi.fn().mockReturnValue({
+          populate: vi.fn().mockResolvedValue([mockAdmin])
+        })
       });
 
       const req = new NextRequest('http://localhost/api/cash-drawer/transfer', {

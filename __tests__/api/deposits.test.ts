@@ -25,6 +25,7 @@ vi.mock('@/lib/tenantDb', () => ({
 
 vi.mock('@/lib/rbac', () => ({
   checkPermission: vi.fn().mockResolvedValue(null),
+  checkPermissionWithSession: vi.fn().mockResolvedValue({ error: null, session: { user: { id: 'test-user', role: 'Super Admin' } } }),
 }));
 
 describe('Deposits API', () => {
@@ -101,6 +102,8 @@ describe('Deposits API', () => {
 
       const mockInvoice = { _id: 'inv1', amountPaid: 0, totalAmount: 1000, save: vi.fn() };
       (models.Invoice.findById as any).mockResolvedValue(mockInvoice);
+      // route recalculates paidAmount from ALL deposits on the invoice (avoids double-counting)
+      (models.Deposit.find as any).mockResolvedValue([{ amount: 500 }]);
 
       const req = new NextRequest('http://localhost/api/deposits', {
         method: 'POST',
@@ -129,6 +132,8 @@ describe('Deposits API', () => {
       
       const mockInvoice = { _id: 'inv1', amountPaid: 0, totalAmount: 1000, save: vi.fn() };
       (models.Invoice.findById as any).mockResolvedValue(mockInvoice);
+      // route recalculates paidAmount from ALL deposits on the invoice (avoids double-counting)
+      (models.Deposit.find as any).mockResolvedValue([{ amount: 1000 }]);
 
       const req = new NextRequest('http://localhost/api/deposits', {
         method: 'POST',

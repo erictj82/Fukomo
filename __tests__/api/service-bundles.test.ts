@@ -18,9 +18,13 @@ vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'test-user-id' } }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
-}));
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+  };
+});
 
 describe('Service Bundles API', () => {
   beforeEach(() => {
@@ -36,7 +40,7 @@ describe('Service Bundles API', () => {
         { _id: '1', name: 'Wedding Package', isActive: true, services: [{ service: { name: 'Makeup' } }] }
       ];
 
-      const sortMock = vi.fn().mockResolvedValue(mockBundles);
+      const sortMock = vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(mockBundles) });
       const populateMock = vi.fn().mockReturnValue({ sort: sortMock });
       (models.ServiceBundle.find as any).mockReturnValue({ populate: populateMock });
 
@@ -51,7 +55,8 @@ describe('Service Bundles API', () => {
       expect(data.success).toBe(true);
       expect(data.data[0].name).toBe('Wedding Package');
       expect(models.ServiceBundle.find).toHaveBeenCalledWith({ isActive: true });
-      expect(populateMock).toHaveBeenCalledWith('services.service', 'name price commissionType commissionValue duration');
+      // Route projection now also selects selling-commission fields on the populated service.
+      expect(populateMock).toHaveBeenCalledWith('services.service', 'name price commissionType commissionValue sellingCommissionType sellingCommissionValue duration');
     });
   });
 
@@ -116,9 +121,17 @@ describe('Service Bundles API', () => {
 
       expect(res.status).toBe(201);
       expect(data.success).toBe(true);
+      // Route now persists optional media + selling-commission fields with defaults.
+      // With this payload (name/price/services only) the optional strings fall through to
+      // `undefined` and selling-commission defaults to fixed/0.
       expect(models.ServiceBundle.create).toHaveBeenCalledWith({
         name: 'Promo Bundle',
+        description: undefined,
         price: 500,
+        sellingCommissionType: 'fixed',
+        sellingCommissionValue: 0,
+        image: undefined,
+        icon: undefined,
         services: payload.services,
       });
     });

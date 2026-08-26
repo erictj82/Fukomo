@@ -10,11 +10,38 @@ vi.mock('@/lib/tenantDb', () => ({
     },
     Customer: {
       findByIdAndUpdate: vi.fn(),
+      updateOne: vi.fn(),
+    },
+    // PUT reads loyalty rate via `Settings.findOne().lean()` (route line ~85).
+    // Default lean -> null so the route uses its documented fallback rate (10).
+    Settings: {
+      findOne: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(null) }),
+    },
+    // DELETE (VOID) also destructures these; `PackageUsageLedger.find` (route
+    // line ~245) is always awaited, so it must default to an empty array.
+    PackageOrder: {
+      findOne: vi.fn(),
+    },
+    CustomerPackage: {
+      findById: vi.fn(),
+    },
+    PackageUsageLedger: {
+      find: vi.fn().mockResolvedValue([]),
+      findByIdAndDelete: vi.fn(),
+    },
+    CashBalance: {
+      findOneAndUpdate: vi.fn(),
+    },
+    CashLog: {
+      create: vi.fn(),
     },
   }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
+vi.mock('@/lib/rbac', async (importOriginal) => ({
+  ...(await importOriginal() as any),
+  // checkPermissionWithSession dibiarkan ASLI (baca auth() yang di-mock) supaya test
+  // "403 if user is not Super Admin" (auth→Staff) tetap kena enforcement beneran.
   checkPermission: vi.fn().mockResolvedValue(null),
 }));
 

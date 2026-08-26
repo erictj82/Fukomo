@@ -26,9 +26,13 @@ vi.mock('@/lib/tenantDb', () => ({
   }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
-}));
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+  };
+});
 
 vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'u1' } }),

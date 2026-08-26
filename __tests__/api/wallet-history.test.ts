@@ -12,6 +12,7 @@ vi.mock('@/lib/tenantDb', () => ({
 
 vi.mock('@/lib/rbac', () => ({
   checkPermission: vi.fn().mockResolvedValue(null),
+  checkPermissionWithSession: vi.fn().mockResolvedValue({ error: null, session: { user: { id: 'test-user', role: 'Super Admin' } } }),
 }));
 
 describe('Wallet History API', () => {

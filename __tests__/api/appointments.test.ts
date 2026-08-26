@@ -24,6 +24,7 @@ vi.mock('@/lib/tenantDb', () => ({
       findByIdAndUpdate: vi.fn(),
     },
     Deposit: {
+      find: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn(),
     },
     Settings: {
@@ -32,6 +33,18 @@ vi.mock('@/lib/tenantDb', () => ({
     Staff: {},
     Service: {
       findById: vi.fn(),
+    },
+    // generateInvoiceNumber() (POST + PUT invoice creation) re-reads models and uses Counter.
+    Counter: {
+      findOne: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(null) }),
+      findOneAndUpdate: vi.fn().mockResolvedValue({ seq: 1 }),
+    },
+    // DELETE refunds any deposits to the customer wallet before voiding.
+    Customer: {
+      findByIdAndUpdate: vi.fn(),
+    },
+    WalletTransaction: {
+      create: vi.fn(),
     }
   }),
 }));
@@ -118,7 +131,7 @@ describe('Appointments API', () => {
       (models.Appointment.create as any).mockResolvedValue(mockAppointment);
       
       (models.Invoice.findOne as any).mockReturnValue({
-        sort: vi.fn().mockResolvedValue(null)
+        sort: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(null) })
       });
       (models.Invoice.create as any).mockResolvedValue({ _id: 'inv1' });
 
@@ -143,7 +156,9 @@ describe('Appointments API', () => {
       expect(data.success).toBe(true);
       expect(models.Appointment.create).toHaveBeenCalled();
       expect(models.Invoice.create).toHaveBeenCalled();
-      expect(scheduleFollowUp).toHaveBeenCalledWith('inv1');
+      // Follow-up scheduling now takes (invoiceId, tenantSlug) — tenantSlug is required to
+      // resolve the tenant's approved WABA template (WA follow-up migration).
+      expect(scheduleFollowUp).toHaveBeenCalledWith('inv1', 'test-tenant');
     });
   });
 
@@ -185,7 +200,13 @@ describe('Appointments API', () => {
       (models.Appointment.findByIdAndUpdate as any).mockResolvedValue(updatedAppt);
       
       // Existing invoice check
-      (models.Invoice.findOne as any).mockResolvedValue(null);
+      // PUT calls Invoice.findOne twice: once awaited directly (existing-invoice guard),
+      // once chained via generateInvoiceNumber (.sort().lean()). A thenable that is also
+      // chainable satisfies both, like a real Mongoose query.
+      (models.Invoice.findOne as any).mockReturnValue({
+        sort: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(null) }),
+        then: (resolve: any, reject: any) => Promise.resolve(null).then(resolve, reject),
+      });
       (models.Invoice.countDocuments as any).mockResolvedValue(0);
       (models.Invoice.create as any).mockResolvedValue({ _id: 'inv1' });
 

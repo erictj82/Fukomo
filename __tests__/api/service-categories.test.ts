@@ -18,9 +18,16 @@ vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'test-user-id' } }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
-}));
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    // Route sudah migrasi ke checkPermissionWithSession (B14). Test ini uji happy-path
+    // (checkPermission→null = authorized), jadi kita lewatin enforcement tapi tetap balikin
+    // session dari auth mock supaya session.user.id yang dipakai route tetap konsisten.
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+  };
+});
 
 describe('Service Categories API', () => {
   beforeEach(() => {

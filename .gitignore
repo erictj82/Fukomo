@@ -61,3 +61,7 @@ xendit api key.txt
 # JANGAN di-version-control. File fisik di server tetap ada, git berhenti nge-track.
 /public/uploads/*
 !/public/uploads/.gitkeep
+
+# throwaway one-off diagnostic/repair scripts (not for repo)
+scripts/_*.js
+scripts/_*.ts

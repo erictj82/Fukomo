@@ -17,6 +17,7 @@ vi.mock('@/lib/tenantDb', () => ({
     },
     Customer: {
       findById: vi.fn(),
+      findOneAndUpdate: vi.fn(),
     },
     CustomerPackage: {
       create: vi.fn(),
@@ -24,12 +25,23 @@ vi.mock('@/lib/tenantDb', () => ({
     Invoice: {
       findOne: vi.fn(),
       create: vi.fn(),
-    }
+    },
+    // PATCH (paid=true) generates an invoice number (Counter, via generateInvoiceNumber)
+    // and records the cash movement + wallet ledger.
+    Counter: {
+      findOne: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(null) }),
+      findOneAndUpdate: vi.fn().mockResolvedValue({ seq: 1 }),
+    },
+    WalletTransaction: { create: vi.fn() },
+    // Cash payment path reads kasir/brankas/bank off the returned balance doc.
+    CashBalance: { findOneAndUpdate: vi.fn().mockResolvedValue({ kasirBalance: 0, brankasBalance: 0, bankBalance: 0 }) },
+    CashLog: { create: vi.fn() },
   }),
 }));
 
 vi.mock('@/lib/rbac', () => ({
   checkPermission: vi.fn().mockResolvedValue(null),
+  checkPermissionWithSession: vi.fn().mockResolvedValue({ error: null, session: { user: { id: 'test-user', role: 'Super Admin' } } }),
 }));
 
 describe('Package Orders API', () => {
@@ -177,7 +189,7 @@ describe('Package Orders API', () => {
       (models.CustomerPackage.create as any).mockResolvedValue({ _id: 'cp-1' });
       
       (models.Invoice.findOne as any).mockReturnValue({
-        sort: vi.fn().mockResolvedValue(null)
+        sort: vi.fn().mockReturnValue({ lean: vi.fn().mockResolvedValue(null) })
       });
       (models.Invoice.create as any).mockResolvedValue({ _id: 'inv-1' });
 

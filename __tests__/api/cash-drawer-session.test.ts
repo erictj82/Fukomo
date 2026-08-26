@@ -18,9 +18,13 @@ vi.mock('@/lib/tenantDb', () => ({
   }),
 }));
 
-vi.mock('@/lib/rbac', () => ({
-  checkPermission: vi.fn().mockResolvedValue(null),
-}));
+vi.mock('@/lib/rbac', async () => {
+  const authMod: any = await import('@/auth');
+  return {
+    checkPermission: vi.fn().mockResolvedValue(null),
+    checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
+  };
+});
 
 vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'test-user-id' } }),
@@ -78,9 +82,11 @@ describe('Cash Drawer Session API', () => {
       expect(mockBalance.kasirBalance).toBe(500000);
       expect(mockBalance.save).toHaveBeenCalled();
       
-      // Should create adjustment log (discrepancy of +100000)
+      // On OPEN, a modal difference is reconciled AGAINST brankas (kasir +100k, brankas -100k)
+      // and logged as a 'transfer' (money sourced from the safe). Only CLOSE discrepancies —
+      // unexplained over/short with no counterpart — are logged as 'adjustment'. See route:60 vs :137.
       expect(models.CashLog.create).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'adjustment',
+        type: 'transfer',
         amount: 100000
       }));
       

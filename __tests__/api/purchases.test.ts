@@ -22,12 +22,18 @@ vi.mock('@/lib/tenantDb', () => ({
     PurchaseDeposit: {
       find: vi.fn(),
       create: vi.fn(),
-    }
+    },
+    // POST /api/purchases generates its PO number via Counter.findByIdAndUpdate;
+    // the route reads `.seq` off the returned doc (→ PUR-2024-00001).
+    Counter: {
+      findByIdAndUpdate: vi.fn().mockResolvedValue({ seq: 1 }),
+    },
   }),
 }));
 
 vi.mock('@/lib/rbac', () => ({
   checkPermission: vi.fn().mockResolvedValue(null),
+  checkPermissionWithSession: vi.fn().mockResolvedValue({ error: null, session: { user: { id: 'test-user', role: 'Super Admin' } } }),
 }));
 
 describe('Purchases API', () => {
