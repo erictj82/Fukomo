@@ -80,9 +80,11 @@ vi.mock('@/lib/waProvider', () => ({
 }));
 
 import { processPendingWaSchedules } from '@/lib/scheduler';
+import { wabaLicensesFingerprint } from '@/lib/wabaBinding';
 
 const WABA_CONFIG = { provider: 'balesotomatis', balesotomatis: { mode: 'waba', secretKey: 'sk', licensesKey: 'lk' } };
 const FONNTE_CONFIG = { provider: 'fonnte', fonnteToken: 'ft' };
+const LK_FP = wabaLicensesFingerprint('lk');
 
 const makeScheduleDoc = (templateOverrides: Record<string, any> = {}) => ({
     _id: 's1',
@@ -96,6 +98,8 @@ const makeScheduleDoc = (templateOverrides: Record<string, any> = {}) => ({
         metaLanguage: 'id',
         metaVariables: ['nama_customer', 'nama_service'],
         metaStatus: 'APPROVED',
+        wabaLicensesFingerprint: LK_FP,
+        wabaPhone: '628111111111',
         ...templateOverrides,
     },
     transactionId: { items: [{ itemModel: 'Service', name: 'Korean Glass Skin' }] },
@@ -105,7 +109,7 @@ describe('processPendingWaSchedules — routing follow-up ke WABA', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         state.pending = [{ _id: 's1' }];
-        state.settings = { storeName: 'Salon Fukomo' };
+        state.settings = { storeName: 'Salon Fukomo', balesotomatisWabaPhone: '628111111111' };
         state.scheduleDoc = makeScheduleDoc();
         mockGetMasterModels.mockResolvedValue({
             Store: { find: () => ({ select: () => ({ lean: async () => [{ slug: 'coba1' }] }) }) },
@@ -189,5 +193,23 @@ describe('processPendingWaSchedules — routing follow-up ke WABA', () => {
         expect(mockGetBalesOtomatisTemplateId).toHaveBeenCalledTimes(1); // cache: 2 schedule, 1 resolve
         expect(mockSendTemplateViaBalesOtomatis).toHaveBeenCalledTimes(2);
         expect(res).toEqual({ total: 2, sent: 2, failed: 0 });
+    });
+
+    it('tenant WABA + template nomor lain → failed, tidak kirim', async () => {
+        state.scheduleDoc = makeScheduleDoc({
+            wabaLicensesFingerprint: wabaLicensesFingerprint('other-license'),
+            wabaPhone: '628999999999',
+        });
+        mockGetWaProviderConfigForPurpose.mockImplementation((_s: any, purpose: string) =>
+            purpose === 'campaign' ? WABA_CONFIG : FONNTE_CONFIG,
+        );
+
+        const res = await processPendingWaSchedules(new Date('2026-08-18T03:00:00Z'));
+
+        expect(mockSendTemplateViaBalesOtomatis).not.toHaveBeenCalled();
+        expect(mockSendWhatsApp).not.toHaveBeenCalled();
+        const failCall = mockFindByIdAndUpdate.mock.calls.find((c) => c[1]?.status === 'failed');
+        expect(String(failCall![1].error)).toMatch(/folder nomor lain/i);
+        expect(res).toEqual({ total: 1, sent: 0, failed: 1 });
     });
 });

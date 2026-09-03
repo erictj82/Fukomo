@@ -163,6 +163,10 @@ const SettingsSchema = new mongoose.Schema({
     balesotomatisNumberId: { type: String, default: '' },    // mode unofficial — id device yang tersambung QR
     balesotomatisSecretKey: { type: String, default: '' },   // mode waba
     balesotomatisLicensesKey: { type: String, default: '' }, // mode waba
+    // Nomor WABA yang terdaftar di Meta untuk kredensial di atas (E.164 tanpa +, mis. 62812...).
+    balesotomatisWabaPhone: { type: String, default: '' },
+    // Nama kustom folder template per nomor WABA (key = nomor / _unfiled).
+    wabaTemplateFolderLabels: { type: mongoose.Schema.Types.Mixed, default: {} },
     // Override manual max pesan per hari (0 = auto berdasarkan umur nomor)
     fonnteMaxDailyMessages: {
         type: Number,

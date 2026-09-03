@@ -52,7 +52,11 @@ async function compileWaNotaData(id: string, tenantSlug: string, request: Reques
   let itemsText = '';
   if (invoice.items && Array.isArray(invoice.items)) {
     itemsText = invoice.items.map((item: any) => {
-      return `${item.quantity}x ${item.name}\n   ${formatRupiah(item.price * item.quantity)}`;
+      const desc = String(item.description || '').trim();
+      const line = `${item.quantity}x ${item.name}`;
+      return desc
+        ? `${line}\n   ${desc}\n   ${formatRupiah(item.price * item.quantity)}`
+        : `${line}\n   ${formatRupiah(item.price * item.quantity)}`;
     }).join('\n');
   }
 

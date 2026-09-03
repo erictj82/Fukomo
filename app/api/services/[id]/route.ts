@@ -34,7 +34,8 @@ const normalizeServicePayload = (payload: any) => {
 
     // Sanitize parentService: convert empty string to null
     // Mongoose ObjectId cannot cast "" → harus null untuk "no parent"
-    if (body.parentService === '' || body.parentService === undefined) {
+    // Hanya jika field dikirim, supaya PUT parsial (mis. ganti kategori) tidak menghapus parent.
+    if ('parentService' in body && (body.parentService === '' || body.parentService === undefined)) {
         body.parentService = null;
     }
 
@@ -43,7 +44,7 @@ const normalizeServicePayload = (payload: any) => {
 
 export async function PUT(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-    const { Service } = await getTenantModels(tenantSlug);
+        const { Service, ServiceCategory } = await getTenantModels(tenantSlug);
 
     try {
     const permissionErrorPUT = await checkPermission(request, 'services', 'edit');
@@ -52,10 +53,30 @@ export async function PUT(request: NextRequest, props: any) {
         const { id } = await props.params;
         const rawBody = await request.json();
         const body = normalizeServicePayload(rawBody);
+        const { applySkillNameFromCategory } = await import('@/lib/serviceSkillFromCategory');
+        await applySkillNameFromCategory(ServiceCategory, body);
+        const existing = await Service.findById(id);
+        if (!existing) {
+            return NextResponse.json({ success: false, error: "Service not found" }, { status: 404 });
+        }
+        if (!String(body.skillName || '').trim() && !(existing as any).skillName) {
+            const { isWorkIntegrationEnabled } = await import('@/lib/workIntegration');
+            if (isWorkIntegrationEnabled()) {
+                return NextResponse.json({ success: false, error: "Kategori skill wajib dipilih untuk link ke Work." }, { status: 400 });
+            }
+        }
         const service = await Service.findByIdAndUpdate(id, body, { new: true });
 
         if (!service) {
             return NextResponse.json({ success: false, error: "Service not found" }, { status: 404 });
+        }
+        try {
+            const { isWorkIntegrationEnabled, syncCatalogServiceToWork, catalogFieldsChanged } = await import('@/lib/workIntegration');
+            if (isWorkIntegrationEnabled() && catalogFieldsChanged(existing, service)) {
+                await syncCatalogServiceToWork(tenantSlug, service);
+            }
+        } catch (syncErr: any) {
+            return NextResponse.json({ success: false, error: syncErr?.message || 'Gagal sync layanan ke Work.' }, { status: 502 });
         }
 
         return NextResponse.json({ success: true, data: service });

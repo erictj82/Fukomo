@@ -27,7 +27,6 @@ import {
   QrCode,
   MessageSquare,
   Gift,
-  Layers,
   Crown,
   FileSpreadsheet,
   Megaphone,
@@ -54,6 +53,7 @@ const menuSections = [
       { name: "Calendar", href: "/appointments/calendar", icon: Clock },
       { name: "POS", href: "/pos", icon: ShoppingCart },
       { name: "Invoices", href: "/invoices", icon: FileText },
+      { name: "Correction Requests", href: "/corrections", icon: ClipboardList },
     ],
   },
   {
@@ -110,7 +110,7 @@ export default function Sidebar({
   toggleSidebar,
 }: SidebarProps) {
   const pathname = usePathname();
-  const { canView } = usePermission();
+  const { canView, canCreate, canEdit } = usePermission();
   const [storeName, setStoreName] = useState("SalonNext");
 
   useEffect(() => {
@@ -160,6 +160,7 @@ export default function Sidebar({
       Roles: "roles",
       Settings: "settings",
       Invoices: "invoices",
+      "Correction Requests": "corrections",
       "AI Reports": "aiReports",
       "Activity Log": "activityLogs",
       Calendar: "calendarView",
@@ -174,6 +175,9 @@ export default function Sidebar({
       items: section.items.filter((item) => {
         const resource = getResourceKey(item.name);
         if (!resource) return true;
+        if (item.name === "Correction Requests") {
+          return canView(resource) || canCreate(resource) || canEdit(resource);
+        }
         return canView(resource);
       }),
     }))

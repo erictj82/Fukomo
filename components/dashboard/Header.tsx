@@ -6,6 +6,7 @@ import { User, Menu, ChevronLeft, ChevronRight, LogOut, Settings, Clock } from "
 import TenantLink from '@/components/TenantLink';
 import { signOut } from "next-auth/react";
 import { usePermission } from "@/hooks/usePermission";
+import CorrectionNotificationBell from "@/components/dashboard/CorrectionNotificationBell";
 
 interface HeaderProps {
     toggleSidebar: () => void;
@@ -140,6 +141,7 @@ export default function Header({ toggleSidebar, toggleCollapse, isSidebarCollaps
             </div>
 
             <div className="flex items-center gap-6">
+                <CorrectionNotificationBell />
                 <TenantLink href="/wa-templates" className="hidden md:flex">
                     <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${waGreetingEnabled
                             ? 'bg-emerald-50 border-emerald-200 text-emerald-700'

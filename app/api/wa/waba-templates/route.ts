@@ -2,6 +2,7 @@ import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermissionWithSession } from '@/lib/rbac';
 import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose, testBalesOtomatisWaba } from '@/lib/waProvider';
+import { bindingFromSettings, belongsToCurrentFolder, extractWabaPhoneFromPayload, stampWabaBinding } from '@/lib/wabaBinding';
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -26,6 +27,7 @@ export async function GET(request: NextRequest, props: any) {
         }
 
         const { secretKey, licensesKey } = waConfig.balesotomatis;
+        const bind = bindingFromSettings(settings, licensesKey);
         const result = await testBalesOtomatisWaba(secretKey, licensesKey);
 
         if (!result.success) {
@@ -48,15 +50,18 @@ export async function GET(request: NextRequest, props: any) {
 
                 let matched = false;
                 for (const loc of localTemplates) {
+                    if (!belongsToCurrentFolder(loc, bind)) continue;
                     const cleanLoc = loc.name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
                     if (cleanLoc === metaName || loc.name.toLowerCase() === metaName || loc.metaTemplateName === metaName) {
                         loc.metaStatus = statusVal;
                         loc.metaTemplateName = metaName;
+                        stampWabaBinding(loc, bind);
                         await loc.save();
                         matched = true;
                     }
                 }
                 if (!matched) {
+                    if (!bind.phone) continue;
                     let bodyText = metaName;
                     if (typeof t.template_content === 'string' && t.template_content) {
                         bodyText = t.template_content;
@@ -73,16 +78,20 @@ export async function GET(request: NextRequest, props: any) {
                         isGreetingEnabled: false,
                         metaStatus: statusVal,
                         metaTemplateName: metaName,
+                        wabaPhone: bind.phone || undefined,
+                        wabaLicensesFingerprint: bind.fingerprint || undefined,
                     });
                 }
             }
         }
 
+        const detectedPhone = extractWabaPhoneFromPayload({ templates: result.templates });
         return NextResponse.json({
             success: true,
             isWaba: true,
             templates: result.templates || [],
             templateCount: result.templateCount || 0,
+            currentWabaPhone: bind.phone || detectedPhone || '',
         });
     } catch (error: any) {
         return NextResponse.json(

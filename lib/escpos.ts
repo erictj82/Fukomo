@@ -66,6 +66,8 @@ export interface ThermalReceiptData {
         price: number;
         discount: number;
         total: number;
+        discountNote?: string;
+        description?: string;
     }[];
     subtotal: number;
     discount: number;
@@ -172,7 +174,14 @@ export function buildReceiptBuffer(data: ThermalReceiptData): string {
             buffer += ` ${qtyPadded} ${pricePadded} ${totalPadded}\n`;
         }
 
-        if (item.discount > 0) {
+        const desc = String(item.description || '').trim();
+        if (desc) {
+            buffer += `  ${desc}\n`;
+        }
+
+        if (item.discountNote) {
+            buffer += `  ${item.discountNote}\n`;
+        } else if (item.discount > 0) {
             buffer += `  Diskon: -${formatCurrencyShort(item.discount)}\n`;
         }
         buffer += `\n`;

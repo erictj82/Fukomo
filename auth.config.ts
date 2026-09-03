@@ -79,6 +79,7 @@ export const authConfig = {
                 // sampai ke route handler. Otentikasi asli endpoint ini = requireInternalApiKey()
                 // (fail-closed 503 kalau key belum di-set, 401 kalau salah), BUKAN session.
                 nextUrl.pathname.startsWith('/api/internal') ||
+                nextUrl.pathname.startsWith('/api/integrations') ||
                 nextUrl.pathname.startsWith('/api/customers/portal');
 
             const isPublicRoute = isPublicPage || isPublicApi;

@@ -202,7 +202,7 @@ export async function POST(request: NextRequest, props: any) {
     // [BUG FIX] Mencegah double omset & Re-use Nomor Invoice Lama
     if (normalizedBody.appointment) {
       const existingInvoices = await Invoice.find({ appointment: normalizedBody.appointment });
-      const pendingInvoice = existingInvoices.find((inv: any) => inv.status === 'pending');
+      const reusable = existingInvoices.find((inv: any) => inv.status === 'pending' || inv.status === 'draft');
       const hasPaid = existingInvoices.some((inv: any) => inv.status === 'paid' || inv.status === 'partially_paid');
       
       if (hasPaid) {
@@ -212,12 +212,9 @@ export async function POST(request: NextRequest, props: any) {
         }, { status: 400 });
       }
 
-      if (pendingInvoice) {
-        // Gunakan kembali nomor invoice lama yang dibuat oleh sistem appointment
-        invoiceNumber = pendingInvoice.invoiceNumber;
-        
-        // Hapus invoice auto-generated yang masih pending
-        await Invoice.findByIdAndDelete(pendingInvoice._id);
+      if (reusable) {
+        invoiceNumber = reusable.invoiceNumber;
+        await Invoice.findByIdAndDelete(reusable._id);
       }
     }
 
@@ -365,7 +362,36 @@ export async function POST(request: NextRequest, props: any) {
     // --- ATOMIC DEPOSIT RECORD CREATION & APPOINTMENT COMPLETION ---
     if (invoice.status === "paid" || invoice.status === "partially_paid") {
       if (normalizedBody.appointment && Appointment) {
-        Appointment.findByIdAndUpdate(normalizedBody.appointment, { status: "completed" }).catch((err: any) => console.error("Auto complete appointment error:", err));
+        const apt = await Appointment.findById(normalizedBody.appointment);
+        if (apt && !['completed', 'cancelled', 'no-show'].includes(apt.status)) {
+          const woDone = apt.workSyncStatus === 'completed';
+          if (woDone) {
+            await Appointment.findByIdAndUpdate(normalizedBody.appointment, {
+              $set: { status: "completed" },
+              $push: {
+                statusHistory: {
+                  status: "completed",
+                  fromStatus: apt.status,
+                  at: new Date(),
+                  by: "pos",
+                  note: "Payment selesai",
+                },
+              },
+            });
+          } else {
+            await Appointment.findByIdAndUpdate(normalizedBody.appointment, {
+              $push: {
+                statusHistory: {
+                  status: apt.status,
+                  fromStatus: apt.status,
+                  at: new Date(),
+                  by: "pos",
+                  note: "Pembayaran diterima (pekerjaan belum selesai)",
+                },
+              },
+            });
+          }
+        }
       }
 
       if (Deposit) {
@@ -801,6 +827,7 @@ export async function GET(request: NextRequest, props: any) {
     const search = searchParams.get("search") || "";
     const status = searchParams.get("status") || "all";
     const customerId = searchParams.get("customerId");
+    const appointmentId = searchParams.get("appointmentId");
 
     const skip = (page - 1) * limit;
 
@@ -808,6 +835,9 @@ export async function GET(request: NextRequest, props: any) {
 
     if (customerId) {
       query.customer = customerId;
+    }
+    if (appointmentId) {
+      query.appointment = appointmentId;
     }
 
     // Scope Check (Own vs All) - Optional refinement
@@ -840,6 +870,9 @@ export async function GET(request: NextRequest, props: any) {
       .populate("customer", "name phone")
       .populate("staff", "name")
       .populate("staffAssignments.staff", "name")
+      .populate("items.staffAssignments.staff", "name")
+      .populate("items.staffAssignments.staffId", "name")
+      .populate("items.sellingBy", "name")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);

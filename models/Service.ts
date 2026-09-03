@@ -34,6 +34,8 @@ export interface IService extends Document {
     }[];
     parentService?: mongoose.Types.ObjectId;
     isFavorite?: boolean;
+    skillName?: string;
+    workServiceId?: string;
 }
 
 const serviceSchema = new Schema<IService>(
@@ -90,6 +92,8 @@ const serviceSchema = new Schema<IService>(
         }],
         parentService: { type: Schema.Types.ObjectId, ref: 'Service', default: null },
         isFavorite: { type: Boolean, default: false },
+        skillName: { type: String, trim: true },
+        workServiceId: { type: String, trim: true },
     },
     { timestamps: true }
 );

@@ -21,6 +21,10 @@ export interface IWaTemplate extends Document {
     metaCategory?: string;
     metaLanguage?: string;
     metaVariables?: string[];
+    // Ikatan ke akun WABA cabang: fingerprint licenses_key + nomor yang tercatat di setting.
+    // Kalau setting ganti nomor/kredensial, template lama tidak "menyala" (usable=false).
+    wabaPhone?: string;
+    wabaLicensesFingerprint?: string;
     // Riwayat pendaftaran template ke Meta (WABA): setiap pengajuan & perubahan status dicatat di sini
     // supaya user bisa lihat kapan template didaftarkan, disetujui, atau ditolak.
     metaHistory?: IWaTemplateHistoryEntry[];
@@ -54,6 +58,8 @@ const waTemplateSchema = new Schema<IWaTemplate>(
         // ke placeholder bernomor {{1}}, {{2}} saat diajukan ke Meta. Dipakai saat blast untuk
         // menyusun `parameters` sesuai urutan yang benar.
         metaVariables: { type: [String], default: undefined },
+        wabaPhone: { type: String, trim: true, default: undefined },
+        wabaLicensesFingerprint: { type: String, trim: true, default: undefined },
         // Riwayat pendaftaran ke Meta. Disimpan urut kronologis (terlama → terbaru), di-cap oleh
         // appendWaTemplateHistory agar tak tumbuh tak terbatas. _id per entri dimatikan (bukan sub-dokumen mandiri).
         metaHistory: {

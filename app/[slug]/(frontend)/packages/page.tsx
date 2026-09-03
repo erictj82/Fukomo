@@ -3,7 +3,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, QrCode, RefreshCw } from "lucide-react";
+import { Plus, Search, Package, Clock, Pencil, Trash2 } from "lucide-react";
 import SearchableSelect from "@/components/dashboard/SearchableSelect";
 import Modal from "@/components/dashboard/Modal";
 import { FormButton } from "@/components/dashboard/FormInput";
@@ -16,12 +16,6 @@ interface ServiceItem {
   _id: string;
   name: string;
   price: number;
-}
-
-interface CustomerItem {
-  _id: string;
-  name: string;
-  phone?: string;
 }
 
 interface ServicePackageItem {
@@ -47,32 +41,14 @@ interface ServicePackage {
   items: ServicePackageItem[];
 }
 
-interface PackageOrder {
-  _id: string;
-  orderNumber: string;
-  amount: number;
-  status: string;
-  customer?: { _id: string; name: string; phone?: string };
-  package?: { _id: string; name: string; code: string };
-  createdAt: string;
-}
-
-interface QrisSession {
-  externalId: string;
-  checkoutUrl: string;
-  status: string;
-  sourceId?: string;
-}
-
 export default function PackagesPage() {
   const params = useParams();
   const slug = params.slug as string;
   const { settings } = useSettings();
 
   const [services, setServices] = useState<ServiceItem[]>([]);
-  const [customers, setCustomers] = useState<CustomerItem[]>([]);
   const [packages, setPackages] = useState<ServicePackage[]>([]);
-  const [orders, setOrders] = useState<PackageOrder[]>([]);
+  const [packageSearch, setPackageSearch] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -92,35 +68,29 @@ export default function PackagesPage() {
   const [formValidityDays, setFormValidityDays] = useState<number | string>(0);
   const [editingPackage, setEditingPackage] = useState<ServicePackage | null>(null);
 
-  const [selectedCustomer, setSelectedCustomer] = useState("");
-  const [selectedPackage, setSelectedPackage] = useState("");
-  const [processingOrder, setProcessingOrder] = useState(false);
-
-  const [qrisSession, setQrisSession] = useState<QrisSession | null>(null);
-  const [isQrisModalOpen, setIsQrisModalOpen] = useState(false);
-  const [checkingQris, setCheckingQris] = useState(false);
-
-  const activePackages = useMemo(() => packages.filter((pkg) => pkg.isActive), [packages]);
+  const filteredPackages = useMemo(() => {
+    const q = packageSearch.trim().toLowerCase();
+    if (!q) return packages;
+    return packages.filter(
+      (pkg) =>
+        pkg.name.toLowerCase().includes(q) ||
+        pkg.code.toLowerCase().includes(q),
+    );
+  }, [packages, packageSearch]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [serviceRes, customerRes, packageRes, orderRes] = await Promise.all([
+      const [serviceRes, packageRes] = await Promise.all([
         fetch("/api/services/package-list", { headers: { "x-store-slug": slug } }),
-        fetch("/api/customers/package-list", { headers: { "x-store-slug": slug } }),
         fetch("/api/service-packages", { headers: { "x-store-slug": slug } }),
-        fetch("/api/package-orders", { headers: { "x-store-slug": slug } }),
       ]);
 
       const serviceData = await serviceRes.json();
-      const customerData = await customerRes.json();
       const packageData = await packageRes.json();
-      const orderData = await orderRes.json();
 
       if (serviceData.success) setServices(serviceData.data || []);
-      if (customerData.success) setCustomers(customerData.data || []);
       if (packageData.success) setPackages(packageData.data || []);
-      if (orderData.success) setOrders(orderData.data || []);
     } catch (error) {
       console.error(error);
     } finally {
@@ -211,87 +181,6 @@ export default function PackagesPage() {
     }
   };
 
-  const createPackageOrder = async () => {
-    if (!selectedCustomer || !selectedPackage) {
-      alert("Pilih customer dan package dulu");
-      return;
-    }
-
-    setProcessingOrder(true);
-    try {
-      const orderRes = await fetch("/api/package-orders", {
-        method: "POST",
-        headers: { "x-store-slug": slug, "Content-Type": "application/json" },
-        body: JSON.stringify({ customerId: selectedCustomer, packageId: selectedPackage }),
-      });
-      const orderData = await orderRes.json();
-
-      if (!orderData.success || !orderData.data?.order) {
-        alert(orderData.error || "Gagal membuat order package");
-        return;
-      }
-
-      const paymentPayload = orderData.data.payment;
-      const qrisRes = await fetch("/api/payments/xendit/create-invoice", {
-        method: "POST",
-        headers: { "x-store-slug": slug, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sourceType: paymentPayload.sourceType,
-          sourceId: paymentPayload.sourceId,
-          amount: paymentPayload.amount,
-          customer: paymentPayload.customer,
-          description: paymentPayload.description,
-        }),
-      });
-
-      const qrisData = await qrisRes.json();
-      if (!qrisData.success || !qrisData.data) {
-        alert(qrisData.error || "Gagal membuat QRIS package");
-        return;
-      }
-
-      setQrisSession({
-        externalId: qrisData.data.externalId,
-        checkoutUrl: qrisData.data.checkoutUrl,
-        status: qrisData.data.status || "pending",
-        sourceId: paymentPayload.sourceId,
-      });
-      setIsQrisModalOpen(true);
-      await loadData();
-    } catch (error) {
-      console.error(error);
-      alert("Gagal memproses order package");
-    } finally {
-      setProcessingOrder(false);
-    }
-  };
-
-  const checkQrisStatus = async () => {
-    if (!qrisSession?.externalId) return;
-
-    setCheckingQris(true);
-    try {
-      const res = await fetch(`/api/payments/xendit/status/${qrisSession.externalId}`, { headers: { "x-store-slug": slug } });
-      const data = await res.json();
-
-      if (!data.success || !data.data) {
-        alert(data.error || "Gagal cek status QRIS");
-        return;
-      }
-
-      setQrisSession((prev) => (prev ? { ...prev, status: data.data.status } : prev));
-      if (data.data.status === "paid") {
-        alert("Pembayaran sukses, paket customer sudah aktif lewat webhook/status sync");
-        await loadData();
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Gagal cek status QRIS");
-    } finally {
-      setCheckingQris(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="p-6 text-gray-700">
@@ -305,12 +194,12 @@ export default function PackagesPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Packages</h1>
-          <p className="text-sm text-gray-500">Master package kuota + penjualan package via QRIS Xendit</p>
+          <p className="text-sm text-gray-500">Master paket kuota layanan</p>
         </div>
         <PermissionGate resource="packages" action="create">
           <button
             onClick={() => setIsModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-900 text-white rounded-lg hover:bg-blue-800"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-900 text-white rounded-lg hover:bg-blue-800 font-semibold text-sm"
           >
             <Plus className="w-4 h-4" />
             Buat Package
@@ -318,127 +207,153 @@ export default function PackagesPage() {
         </PermissionGate>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-        <h2 className="font-bold text-gray-900">Jual Package via QRIS</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <SearchableSelect
-            placeholder="Pilih customer"
-            value={selectedCustomer}
-            onChange={(val) => setSelectedCustomer(val)}
-            options={customers.map((c) => ({ value: c._id, label: `${c.name}${c.phone ? ` (${c.phone})` : ""}` }))}
-          />
-          <SearchableSelect
-            placeholder="Pilih package"
-            value={selectedPackage}
-            onChange={(val) => setSelectedPackage(val)}
-            options={activePackages.map((pkg) => ({ value: pkg._id, label: `${pkg.name} - ${settings.symbol}${pkg.price}` }))}
-          />
-          <FormButton onClick={createPackageOrder} loading={processingOrder} variant="success" icon={<QrCode className="w-4 h-4" />}>
-            Buat QRIS Package
-          </FormButton>
-        </div>
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+        <input
+          type="text"
+          placeholder="Cari nama atau kode paket..."
+          className="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900/20 focus:border-blue-900 text-sm"
+          value={packageSearch}
+          onChange={(e) => setPackageSearch(e.target.value)}
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <h3 className="font-bold text-gray-900 mb-3">Master Package</h3>
-          <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-            {packages.length === 0 && <p className="text-sm text-gray-500">Belum ada package.</p>}
-            {packages.map((pkg) => (
-              <div key={pkg._id} className="border border-gray-200 rounded-lg p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-gray-900">{pkg.name}</p>
-                    <p className="text-xs text-gray-500">{pkg.code}</p>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${pkg.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-                    {pkg.isActive ? "active" : "inactive"}
-                  </span>
+      {filteredPackages.length === 0 ? (
+        <div className="bg-white border border-gray-200 rounded-xl p-12 text-center text-gray-500">
+          <Package className="w-12 h-12 mx-auto mb-3 opacity-20" />
+          <p className="font-semibold">
+            {packages.length === 0 ? "Belum ada package" : "Tidak ada paket yang cocok"}
+          </p>
+          <p className="text-sm mt-1">
+            {packages.length === 0
+              ? "Klik Buat Package untuk menambah paket pertama."
+              : "Coba kata kunci lain."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredPackages.map((pkg) => (
+            <div
+              key={pkg._id}
+              className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col hover:shadow-sm transition-shadow"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-bold text-gray-900 truncate">{pkg.name}</p>
+                  <p className="text-xs text-gray-500 font-mono mt-0.5">{pkg.code}</p>
                 </div>
-                <p className="text-sm font-bold text-blue-900 mt-2">{settings.symbol}{pkg.price.toLocaleString('id-ID')}</p>
+                <span
+                  className={`shrink-0 text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full ${
+                    pkg.isActive
+                      ? "bg-green-50 text-green-700 border border-green-200"
+                      : "bg-gray-100 text-gray-500 border border-gray-200"
+                  }`}
+                >
+                  {pkg.isActive ? "active" : "inactive"}
+                </span>
+              </div>
+
+              {pkg.description ? (
+                <p className="text-xs text-gray-500 mt-2 line-clamp-2">{pkg.description}</p>
+              ) : null}
+
+              <p className="text-lg font-black text-gray-900 mt-3">
+                {settings.symbol}
+                {pkg.price.toLocaleString("id-ID")}
+              </p>
+
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {(pkg.validityDays || 0) > 0 ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-100 px-2 py-0.5 rounded-full">
+                    <Clock className="w-3 h-3" />
+                    {pkg.validityDays} hari
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-medium text-gray-400">Tanpa batas waktu</span>
+                )}
                 {(pkg.commissionValue || 0) > 0 && (
-                  <p className="text-xs text-green-600 font-semibold">Komisi: {pkg.commissionType === 'percentage' ? `${pkg.commissionValue}%` : `${settings.symbol}${(pkg.commissionValue || 0).toLocaleString('id-ID')}`}</p>
-                )}
-                {(pkg.validityDays || 0) > 0 && (
-                  <p className="text-xs text-orange-600 font-semibold">Berlaku: {pkg.validityDays} hari</p>
-                )}
-                {(pkg.validityDays || 0) === 0 && (
-                  <p className="text-xs text-gray-400 font-medium">Tanpa batas waktu</p>
-                )}
-                <div className="mt-2 space-y-1">
-                  {pkg.items.map((item, idx) => (
-                    <p key={idx} className="text-xs text-gray-700">- {item.serviceName}: {item.quota}x</p>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-2">
-                  <PermissionGate resource="packages" action="edit">
-                    <button
-                      onClick={() => {
-                        setEditingPackage(pkg);
-                        setFormName(pkg.name);
-                        setFormCode(pkg.code);
-                        setFormImage(pkg.image || "");
-                        setFormIcon((pkg as any).icon || "");
-                        setFormPrice(pkg.price);
-                        setFormDescription(pkg.description || "");
-                        setFormCommissionType(pkg.commissionType || 'fixed');
-                        setFormCommissionValue(pkg.commissionValue || 0);
-                        setFormSellingCommissionType(pkg.sellingCommissionType || 'fixed');
-                        setFormSellingCommissionValue(pkg.sellingCommissionValue || 0);
-                        setFormValidityDays(pkg.validityDays || 0);
-                        setFormItems(pkg.items.map(i => ({ serviceId: typeof i.service === 'string' ? i.service : (i.service as any)?._id || '', quota: i.quota })));
-                        setIsModalOpen(true);
-                      }}
-                      className="text-xs text-blue-700 font-bold hover:underline"
-                    >
-                      Edit
-                    </button>
-                  </PermissionGate>
-                  <PermissionGate resource="packages" action="delete">
-                    <button
-                      onClick={async () => {
-                        if (!confirm(`Hapus package "${pkg.name}"?`)) return;
-                        const res = await fetch(`/api/service-packages/${pkg._id}`, { headers: { "x-store-slug": slug }, method: 'DELETE' });
-                        const data = await res.json();
-                        if (data.success) loadData();
-                        else alert(data.error || 'Gagal hapus');
-                      }}
-                      className="text-xs text-red-600 font-bold hover:underline"
-                    >
-                      Hapus
-                    </button>
-                  </PermissionGate>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-900">Order Package</h3>
-            <button onClick={loadData} className="inline-flex items-center gap-1 text-xs text-blue-700">
-              <RefreshCw className="w-3.5 h-3.5" />
-              Refresh
-            </button>
-          </div>
-          <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
-            {orders.length === 0 && <p className="text-sm text-gray-500">Belum ada order package.</p>}
-            {orders.map((order) => (
-              <div key={order._id} className="border border-gray-200 rounded-lg p-3">
-                <div className="flex items-center justify-between">
-                  <p className="font-semibold text-gray-900 text-sm">{order.orderNumber}</p>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${order.status === "paid" ? "bg-green-100 text-green-700" : order.status === "pending" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
-                    {order.status}
+                  <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+                    Komisi{" "}
+                    {pkg.commissionType === "percentage"
+                      ? `${pkg.commissionValue}%`
+                      : `${settings.symbol}${(pkg.commissionValue || 0).toLocaleString("id-ID")}`}
                   </span>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">{order.customer?.name || "-"} • {order.package?.name || "-"}</p>
-                <p className="text-sm font-bold text-blue-900 mt-1">{settings.symbol}{order.amount}</p>
+                )}
               </div>
-            ))}
-          </div>
+
+              <div className="mt-3 space-y-1 flex-1">
+                {pkg.items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between text-xs text-gray-700 bg-gray-50 rounded-md px-2 py-1"
+                  >
+                    <span className="truncate pr-2">
+                      {item.serviceName ||
+                        (typeof item.service === "object" && item.service
+                          ? (item.service as any).name
+                          : "Service")}
+                    </span>
+                    <span className="shrink-0 font-bold text-gray-900">{item.quota}x</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 flex items-center gap-2 border-t border-gray-100 pt-3">
+                <PermissionGate resource="packages" action="edit">
+                  <button
+                    onClick={() => {
+                      setEditingPackage(pkg);
+                      setFormName(pkg.name);
+                      setFormCode(pkg.code);
+                      setFormImage(pkg.image || "");
+                      setFormIcon((pkg as any).icon || "");
+                      setFormPrice(pkg.price);
+                      setFormDescription(pkg.description || "");
+                      setFormCommissionType(pkg.commissionType || "fixed");
+                      setFormCommissionValue(pkg.commissionValue || 0);
+                      setFormSellingCommissionType(pkg.sellingCommissionType || "fixed");
+                      setFormSellingCommissionValue(pkg.sellingCommissionValue || 0);
+                      setFormValidityDays(pkg.validityDays || 0);
+                      setFormItems(
+                        pkg.items.map((i) => ({
+                          serviceId:
+                            typeof i.service === "string"
+                              ? i.service
+                              : (i.service as any)?._id || "",
+                          quota: i.quota,
+                        })),
+                      );
+                      setIsModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-blue-700 border border-blue-200 rounded-md bg-blue-50 hover:bg-blue-100"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    Edit
+                  </button>
+                </PermissionGate>
+                <PermissionGate resource="packages" action="delete">
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Hapus package "${pkg.name}"?`)) return;
+                      const res = await fetch(`/api/service-packages/${pkg._id}`, {
+                        headers: { "x-store-slug": slug },
+                        method: "DELETE",
+                      });
+                      const data = await res.json();
+                      if (data.success) loadData();
+                      else alert(data.error || "Gagal hapus");
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-red-700 border border-red-200 rounded-md bg-red-50 hover:bg-red-100"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Hapus
+                  </button>
+                </PermissionGate>
+              </div>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
 
       <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); resetForm(); }} title={editingPackage ? "Edit Package" : "Buat Master Package"}>
         <div className="space-y-3">
@@ -567,28 +482,6 @@ export default function PackagesPage() {
 
           <div className="pt-2">
             <FormButton onClick={createPackage} loading={saving} variant="success">{editingPackage ? "Update Package" : "Simpan Package"}</FormButton>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal isOpen={isQrisModalOpen} onClose={() => setIsQrisModalOpen(false)} title="QRIS Package Order">
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">Status: <span className="font-bold uppercase text-gray-900">{qrisSession?.status || "pending"}</span></p>
-          <p className="text-xs text-gray-500 break-all">External ID: {qrisSession?.externalId || "-"}</p>
-
-          {qrisSession?.checkoutUrl && (
-            <a
-              href={qrisSession.checkoutUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-900 text-white text-sm font-semibold hover:bg-blue-800"
-            >
-              Buka Checkout QRIS
-            </a>
-          )}
-
-          <div>
-            <FormButton onClick={checkQrisStatus} loading={checkingQris} variant="secondary">Cek Status QRIS</FormButton>
           </div>
         </div>
       </Modal>

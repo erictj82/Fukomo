@@ -35,8 +35,9 @@ const normalizeServicePayload = (payload: any) => {
         };
     }
 
-    // Sanitize parentService: convert empty string to null
-    if (body.parentService === '' || body.parentService === undefined) {
+    // Sanitize parentService: convert empty string to null.
+    // Only when the field is actually sent — jangan overwrite parent di update parsial.
+    if ('parentService' in body && (body.parentService === '' || body.parentService === undefined)) {
         body.parentService = null;
     }
 
@@ -100,8 +101,22 @@ export async function POST(request: NextRequest, props: any) {
         
         const rawBody = await request.json();
         const body = normalizeServicePayload(rawBody);
-        const service = await Service.create(body);
-        return NextResponse.json({ success: true, data: service });
+        const { applySkillNameFromCategory } = await import('@/lib/serviceSkillFromCategory');
+        await applySkillNameFromCategory(ServiceCategory, body);
+        const { isWorkIntegrationEnabled, syncCatalogServiceToWork } = await import('@/lib/workIntegration');
+        if (!String(body.skillName || '').trim() && isWorkIntegrationEnabled()) {
+            return NextResponse.json({ success: false, error: "Kategori skill wajib dipilih untuk link ke Work." }, { status: 400 });
+        }
+        const service = await new Service(body).save();
+        try {
+            if (isWorkIntegrationEnabled()) {
+                await syncCatalogServiceToWork(tenantSlug, service);
+            }
+        } catch (syncErr: any) {
+            await Service.findByIdAndDelete(service._id);
+            return NextResponse.json({ success: false, error: syncErr?.message || 'Gagal membuat layanan di Work.' }, { status: 502 });
+        }
+        return NextResponse.json({ success: true, data: await Service.findById(service._id) });
     } catch (error) {
         console.error(error);
         return NextResponse.json({ success: false, error: "Failed to create service" }, { status: 500 });

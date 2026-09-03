@@ -17,11 +17,14 @@ import {
   Filter,
   FileText,
   Layers,
+  Download,
+  Loader2,
 } from "lucide-react";
 import Modal from "@/components/dashboard/Modal";
 import FormInput, {
   FormSelect,
   FormButton,
+  FormTextArea,
 } from "@/components/dashboard/FormInput";
 import SearchableSelect from "@/components/dashboard/SearchableSelect";
 import PermissionGate from "@/components/PermissionGate";
@@ -38,9 +41,12 @@ interface Category {
 interface Service {
   _id: string;
   name: string;
+  description?: string;
   category: Category;
   duration: number;
   price: number;
+  skillName?: string;
+  workServiceId?: string;
   memberPrice?: number;
   commissionValue?: number;
   sellingCommissionType?: string;
@@ -75,13 +81,15 @@ interface WaTemplate {
   name: string;
   metaStatus?: 'LOCAL' | 'PENDING' | 'APPROVED' | 'REJECTED';
   metaCategory?: string;
+  usable?: boolean;
+  unusableReason?: string | null;
+  wabaPhone?: string;
 }
 
-// Label opsi dropdown template follow-up. Tenant WABA-mode sudah difilter APPROVED di server
-// (assignable=1), jadi di sini tinggal kasih emoji status + kategori (UTILITY/MARKETING).
 function waTemplateOptionLabel(t: WaTemplate): string {
   const cat = t.metaCategory ? ` · ${t.metaCategory}` : "";
-  if (t.metaStatus === "APPROVED") return `🟢 ${t.name}${cat}`;
+  if (t.usable) return `🟢 ${t.name}${cat}`;
+  if (t.metaStatus === "APPROVED") return `⛔ ${t.name} [nomor lain]`;
   if (t.metaStatus === "PENDING") return `🟡 ${t.name} [Pending Review]`;
   return t.name;
 }
@@ -112,6 +120,8 @@ interface ServiceBundle {
   services: ServiceBundleItem[];
 }
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
 export default function ServicesPage() {
   const params = useParams();
   const slug = params.slug as string;
@@ -128,6 +138,8 @@ export default function ServicesPage() {
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [serviceFormData, setServiceFormData] = useState({
     name: "",
+    description: "",
+    skillName: "",
     category: "",
     duration: 30,
     price: 0,
@@ -163,6 +175,7 @@ export default function ServicesPage() {
   const [activeTab, setActiveTab] = useState<
     "services" | "categories" | "bundles"
   >("services");
+  const [workExporting, setWorkExporting] = useState(false);
 
   // Bundle State
   const [bundles, setBundles] = useState<ServiceBundle[]>([]);
@@ -209,6 +222,8 @@ export default function ServicesPage() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [updatingCategoryId, setUpdatingCategoryId] = useState<string | null>(null);
   const [pagination, setPagination] = useState<any>({
     total: 0,
     page: 1,
@@ -225,7 +240,7 @@ export default function ServicesPage() {
 
   useEffect(() => {
     fetchServices();
-  }, [selectedCategory, page]);
+  }, [selectedCategory, page, pageSize]);
 
   // Debounce search
   useEffect(() => {
@@ -257,7 +272,7 @@ export default function ServicesPage() {
     try {
       const query = new URLSearchParams();
       query.append("page", page.toString());
-      query.append("limit", "10");
+      query.append("limit", String(pageSize));
       if (search) query.append("search", search);
       if (selectedCategory) query.append("category", selectedCategory);
 
@@ -332,6 +347,7 @@ export default function ServicesPage() {
         headers: { "x-store-slug": slug, "Content-Type": "application/json" },
         body: JSON.stringify({
           ...serviceFormData,
+          skillName: categories.find((c) => c._id === serviceFormData.category)?.name || serviceFormData.skillName || "",
           parentService: serviceFormData.parentService || null,
         }),
       });
@@ -409,6 +425,38 @@ export default function ServicesPage() {
     if ((await res.json()).success) fetchServices();
   };
 
+  const handleInlineCategoryChange = async (service: Service, categoryId: string) => {
+    if (!categoryId || categoryId === service.category?._id) return;
+    const cat = categories.find((c) => c._id === categoryId);
+    if (!cat) return;
+    setUpdatingCategoryId(service._id);
+    try {
+      const res = await fetch(`/api/services/${service._id}`, {
+        method: "PUT",
+        headers: { "x-store-slug": slug, "Content-Type": "application/json" },
+        body: JSON.stringify({ category: categoryId, skillName: cat.name }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || "Gagal ganti kategori skill");
+        return;
+      }
+      setServices((prev) =>
+        prev.map((s) =>
+          s._id === service._id ? { ...s, category: cat, skillName: cat.name } : s,
+        ),
+      );
+      if (selectedCategory && selectedCategory !== categoryId) {
+        fetchServices();
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Gagal ganti kategori skill");
+    } finally {
+      setUpdatingCategoryId(null);
+    }
+  };
+
   const openServiceModal = (service?: Service) => {
     if (service) {
       setEditingService(service);
@@ -416,6 +464,8 @@ export default function ServicesPage() {
       setIncludeProductInCommission(false);
       setServiceFormData({
         name: service.name,
+        description: (service as any).description || "",
+        skillName: (service as any).skillName || "",
         category: service.category._id,
         duration: service.duration,
         price: service.price,
@@ -455,6 +505,8 @@ export default function ServicesPage() {
       setIncludeProductInCommission(false);
       setServiceFormData({
         name: "",
+        description: "",
+        skillName: "",
         category: categories[0]?._id || "",
         duration: 30,
         price: 0,
@@ -608,6 +660,33 @@ export default function ServicesPage() {
     if ((await res.json()).success) fetchBundles();
   };
 
+  const downloadForWork = async () => {
+    setWorkExporting(true);
+    try {
+      const res = await fetch("/api/services/work-export", {
+        headers: { "x-store-slug": slug },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || "Gagal mengunduh file untuk Work.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fukomo-layanan-work-${slug}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Gagal mengunduh file untuk Work.");
+    } finally {
+      setWorkExporting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -619,10 +698,25 @@ export default function ServicesPage() {
                 Services & Categories
               </h1>
               <p className="text-sm text-gray-500">
-                Manage your salon service catalog and categories
+                Kategori jasa = kategori skill Work. Rapikan kategori dulu, lalu Unduh untuk Work.
               </p>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+              {activeTab !== "bundles" && (
+                <button
+                  type="button"
+                  onClick={downloadForWork}
+                  disabled={workExporting}
+                  className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-all flex justify-center items-center gap-2 shadow-sm font-semibold text-sm w-full sm:w-auto disabled:opacity-50"
+                >
+                  {workExporting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  Unduh untuk Work
+                </button>
+              )}
               <PermissionGate resource="services" action="create">
                 {activeTab === "bundles" ? (
                   <button
@@ -639,7 +733,7 @@ export default function ServicesPage() {
                       className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-all flex justify-center items-center gap-2 shadow-sm font-semibold text-sm w-full sm:w-auto"
                     >
                       <Tag className="w-4 h-4" />
-                      New Category
+                      New Kategori Skill
                     </button>
                     <button
                       onClick={() => openServiceModal()}
@@ -666,7 +760,7 @@ export default function ServicesPage() {
               onClick={() => setActiveTab("categories")}
               className={`pb-3 text-sm font-bold transition-colors border-b-2 ${activeTab === "categories" ? "border-blue-900 text-blue-900" : "border-transparent text-gray-500 hover:text-gray-700"}`}
             >
-              Categories
+              Kategori Skill
             </button>
             <button
               onClick={() => setActiveTab("bundles")}
@@ -704,7 +798,7 @@ export default function ServicesPage() {
                       setPage(1);
                     }}
                   >
-                    <option value="">All Categories</option>
+                    <option value="">Semua Kategori Skill</option>
                     {categories.map((cat) => (
                       <option key={cat._id} value={cat._id}>
                         {cat.name}
@@ -733,7 +827,7 @@ export default function ServicesPage() {
                       Service
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Category
+                      Kategori Skill
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       Duration
@@ -815,10 +909,32 @@ export default function ServicesPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-gray-50 text-gray-700 border border-gray-200">
-                            {service.category?.name || "Uncategorized"}
-                          </span>
+                        <td className="px-6 py-4">
+                          <PermissionGate
+                            resource="services"
+                            action="edit"
+                            fallback={
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-gray-50 text-gray-700 border border-gray-200">
+                                {service.category?.name || "Uncategorized"}
+                              </span>
+                            }
+                          >
+                            <select
+                              value={service.category?._id || ""}
+                              disabled={updatingCategoryId === service._id}
+                              onChange={(e) => handleInlineCategoryChange(service, e.target.value)}
+                              className="max-w-[180px] px-2 py-1.5 text-xs font-semibold text-gray-800 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900/20 focus:border-blue-900 disabled:opacity-60"
+                            >
+                              {!service.category?._id && (
+                                <option value="">Pilih kategori</option>
+                              )}
+                              {categories.map((cat) => (
+                                <option key={cat._id} value={cat._id}>
+                                  {cat.name}
+                                </option>
+                              ))}
+                            </select>
+                          </PermissionGate>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-1.5 text-sm text-gray-600">
@@ -880,9 +996,31 @@ export default function ServicesPage() {
                           <h3 className="text-sm font-bold text-gray-900">
                             {service.name}
                           </h3>
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-gray-50 text-gray-700 border border-gray-200 mt-1">
-                            {service.category?.name || "Uncategorized"}
-                          </span>
+                          <PermissionGate
+                            resource="services"
+                            action="edit"
+                            fallback={
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-gray-50 text-gray-700 border border-gray-200 mt-1">
+                                {service.category?.name || "Uncategorized"}
+                              </span>
+                            }
+                          >
+                            <select
+                              value={service.category?._id || ""}
+                              disabled={updatingCategoryId === service._id}
+                              onChange={(e) => handleInlineCategoryChange(service, e.target.value)}
+                              className="mt-1 w-full px-2 py-1.5 text-xs font-semibold text-gray-800 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900/20 focus:border-blue-900 disabled:opacity-60"
+                            >
+                              {!service.category?._id && (
+                                <option value="">Pilih kategori</option>
+                              )}
+                              {categories.map((cat) => (
+                                <option key={cat._id} value={cat._id}>
+                                  {cat.name}
+                                </option>
+                              ))}
+                            </select>
+                          </PermissionGate>
                         </div>
                       </div>
 
@@ -955,10 +1093,29 @@ export default function ServicesPage() {
 
             {/* Pagination */}
             <div className="px-4 py-4 bg-gray-50 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="text-sm text-gray-500 font-medium text-center sm:text-left">
-                Showing <span className="text-gray-900">{services.length}</span>{" "}
-                of <span className="text-gray-900">{pagination.total}</span>{" "}
-                services
+              <div className="flex flex-col sm:flex-row items-center gap-3 text-sm text-gray-500 font-medium text-center sm:text-left">
+                <span>
+                  Showing <span className="text-gray-900">{services.length}</span>{" "}
+                  of <span className="text-gray-900">{pagination.total}</span>{" "}
+                  services
+                </span>
+                <label className="inline-flex items-center gap-2">
+                  <span className="text-gray-500 whitespace-nowrap">Per halaman</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPage(1);
+                      setPageSize(Number(e.target.value));
+                    }}
+                    className="px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600"
+                  >
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1106,7 +1263,7 @@ export default function ServicesPage() {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Category Name
+                      Nama Kategori Skill
                     </th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       Status
@@ -1124,7 +1281,7 @@ export default function ServicesPage() {
                         className="px-6 py-12 text-center text-gray-500"
                       >
                         <Tag className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                        <p>No categories found</p>
+                        <p>Belum ada kategori skill</p>
                       </td>
                     </tr>
                   ) : (
@@ -1431,16 +1588,25 @@ export default function ServicesPage() {
             }
             placeholder="e.g. Hair Cut"
           />
+          <FormTextArea
+            label="Deskripsi produk"
+            rows={2}
+            value={serviceFormData.description}
+            onChange={(e) =>
+              setServiceFormData({ ...serviceFormData, description: e.target.value })
+            }
+            placeholder="Opsional — muncul di nota di bawah nama jasa jika diisi"
+          />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <SearchableSelect
-              label="Category"
+              label="Kategori Skill"
               required
               value={serviceFormData.category}
               onChange={(val) =>
                 setServiceFormData({ ...serviceFormData, category: val })
               }
-              placeholder="Select Category"
+              placeholder="Pilih kategori skill"
               options={categories.map((cat) => ({
                 value: cat._id,
                 label: cat.name,
@@ -1830,7 +1996,7 @@ export default function ServicesPage() {
                 {waTemplates.length === 0 && (
                   <p className="text-xs text-amber-700">
                     {waIsWaba
-                      ? "Belum ada template follow-up yang di-APPROVE Meta. Buat & submit template di menu Template WhatsApp, lalu tunggu status APPROVED sebelum bisa dipilih di sini."
+                      ? "Hanya template di folder nomor WABA yang sedang dipakai di Pengaturan."
                       : "WA template belum ada. Buat dulu template di menu WhatsApp template."}
                   </p>
                 )}
@@ -1861,11 +2027,11 @@ export default function ServicesPage() {
       <Modal
         isOpen={isCategoryModalOpen}
         onClose={() => setIsCategoryModalOpen(false)}
-        title={editingCategory ? "Edit Category" : "Add New Category"}
+        title={editingCategory ? "Edit Kategori Skill" : "Kategori Skill Baru"}
       >
         <form onSubmit={handleCategorySubmit}>
           <FormInput
-            label="Category Name"
+            label="Nama Kategori Skill"
             required
             value={categoryName}
             onChange={(e) => setCategoryName(e.target.value)}
@@ -1884,7 +2050,7 @@ export default function ServicesPage() {
               loading={categorySubmitting}
               className="w-full sm:w-auto"
             >
-              {editingCategory ? "Update Category" : "Create Category"}
+              {editingCategory ? "Update Kategori Skill" : "Buat Kategori Skill"}
             </FormButton>
           </div>
         </form>

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
 import { checkPermissionWithSession } from '@/lib/rbac';
 import { encryptFonnteToken, decryptFonnteToken } from '@/lib/encryption';
+import { normalizeIndonesianPhone } from '@/lib/phone';
 
 // GET /api/settings - Get store settings
 export async function GET(request: NextRequest, props: any) {
@@ -137,7 +138,7 @@ export async function PUT(request: NextRequest, props: any) {
             'waAppointmentReminderEnabled', 'waAppointmentReminderMinutesBefore',
             'waAppointmentReminderDefaultTemplate', 'waNotaTemplate', 'waAdminNotaPrefix',
             'waProvider', 'waHybridMode', 'balesotomatisMode', 'balesotomatisApiKey', 'balesotomatisNumberId',
-            'balesotomatisSecretKey', 'balesotomatisLicensesKey', 'backupSchedule'
+            'balesotomatisSecretKey', 'balesotomatisLicensesKey', 'balesotomatisWabaPhone', 'backupSchedule'
         ];
 
         Object.keys(body).forEach(key => {
@@ -204,6 +205,9 @@ export async function PUT(request: NextRequest, props: any) {
         }
         if (body.balesotomatisLicensesKey) {
             body.balesotomatisLicensesKey = encryptFonnteToken(body.balesotomatisLicensesKey);
+        }
+        if (typeof body.balesotomatisWabaPhone === 'string') {
+            body.balesotomatisWabaPhone = normalizeIndonesianPhone(body.balesotomatisWabaPhone);
         }
 
         if (body.birthdayVoucherId === "") {

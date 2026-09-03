@@ -43,6 +43,10 @@ import LoyaltyTransaction from "@/models/LoyaltyTransaction";
 import Counter from "@/models/Counter";
 import StockLog from "@/models/StockLog";
 import ShortLink from "@/models/ShortLink";
+import Visit from "@/models/Visit";
+import IntegrationIdempotency from "@/models/IntegrationIdempotency";
+import CorrectionRequest from "@/models/CorrectionRequest";
+import AppNotification from "@/models/AppNotification";
 
 // Export all models for convenience
 export {
@@ -88,6 +92,10 @@ export {
   Counter,
   StockLog,
   ShortLink,
+  Visit,
+  IntegrationIdempotency,
+  CorrectionRequest,
+  AppNotification,
 };
 
 // This function can be called to ensure models are loaded
@@ -136,5 +144,9 @@ export function initModels() {
     Counter,
     StockLog,
     ShortLink,
+    Visit,
+    IntegrationIdempotency,
+    CorrectionRequest,
+    AppNotification,
   };
 }

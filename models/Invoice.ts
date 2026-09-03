@@ -4,14 +4,18 @@ export interface IInvoice extends Document {
   invoiceNumber: string;
   customer: mongoose.Types.ObjectId;
   appointment?: mongoose.Types.ObjectId;
-  items: {
+  workOrderId?: string;
+  workOrderNumber?: string;
+    items: {
     item: mongoose.Types.ObjectId; // Service or Product ID
     itemModel: "Service" | "Product" | "TopUp" | "ServicePackage";
     name: string;
+    description?: string;
     price: number;
     quantity: number;
     discount: number; // Amount
     discountNote?: string;
+    fukomoLineId?: string;
     total: number;
     sellingBy?: mongoose.Types.ObjectId;
     sellingCommission?: number;
@@ -39,7 +43,7 @@ export interface IInvoice extends Document {
   }[];
   loyaltyPointsUsed?: number;
   loyaltyPointsEarned?: number;
-  status: "paid" | "pending" | "partially_paid" | "cancelled" | "voided";
+  status: "paid" | "pending" | "partially_paid" | "cancelled" | "voided" | "draft";
   voidedBy?: mongoose.Types.ObjectId;
   voidedAt?: Date;
   voidReason?: string;
@@ -75,6 +79,7 @@ export interface IInvoice extends Document {
     packageName: string;
     usedQuantity: number;
     remainingQuota: number;
+    totalQuota?: number;
     expiryDate?: Date;
   }[];
   // Reprint control (anti-kecurangan cetak ulang nota)
@@ -134,6 +139,8 @@ const invoiceSchema = new Schema<IInvoice>(
     invoiceNumber: { type: String, required: true, unique: true },
     customer: { type: Schema.Types.ObjectId, ref: "Customer" },
     appointment: { type: Schema.Types.ObjectId, ref: "Appointment" },
+    workOrderId: { type: String },
+    workOrderNumber: { type: String },
     items: [
       {
         item: {
@@ -147,13 +154,28 @@ const invoiceSchema = new Schema<IInvoice>(
           enum: ["Service", "Product", "TopUp", "ServicePackage"],
         },
         name: String,
+        description: { type: String, trim: true },
         price: Number,
         quantity: { type: Number, default: 1 },
         discount: { type: Number, default: 0 },
         discountNote: { type: String },
+        fukomoLineId: { type: String },
         total: Number,
         sellingBy: { type: Schema.Types.ObjectId, ref: "Staff" },
         sellingCommission: { type: Number, default: 0 },
+        addedAt: { type: Date },
+        lockedFromWork: { type: Boolean, default: false },
+        removedFromWork: { type: Boolean, default: false },
+        performerNames: { type: String },
+        sellingByName: { type: String },
+        workHistory: [
+          {
+            at: { type: Date, default: Date.now },
+            event: { type: String },
+            staffName: { type: String },
+            note: { type: String },
+          },
+        ],
         splitCommissionMode: {
           type: String,
           enum: ["auto", "manual"],
@@ -189,7 +211,7 @@ const invoiceSchema = new Schema<IInvoice>(
     loyaltyPointsEarned: { type: Number, default: 0 },
     status: {
       type: String,
-      enum: ["paid", "pending", "partially_paid", "cancelled", "voided"],
+      enum: ["paid", "pending", "partially_paid", "cancelled", "voided", "draft"],
       default: "paid",
     },
     // Immutable audit trail — invoices are NEVER hard-deleted
@@ -235,6 +257,7 @@ const invoiceSchema = new Schema<IInvoice>(
         packageName: String,
         usedQuantity: Number,
         remainingQuota: Number,
+        totalQuota: Number,
         expiryDate: Date,
       }
     ],

@@ -66,10 +66,12 @@ export async function GET(request: NextRequest, props: any) {
             customerName: invoice.customer?.name,
             items: (invoice.items || []).map((item: any) => ({
                 name: item.name,
+                description: item.description || undefined,
                 quantity: item.quantity || 1,
-                price: item.price || 0,
+                price: item.discountNote && (item.total || 0) === 0 ? 0 : (item.price || 0),
                 discount: item.discount || 0,
                 total: item.total || 0,
+                discountNote: item.discountNote || undefined,
             })),
             subtotal: invoice.subtotal || 0,
             discount: invoice.discount || 0,

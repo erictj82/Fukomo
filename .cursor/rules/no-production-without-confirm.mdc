@@ -1,0 +1,31 @@
+---
+description: Never touch production without Eric's explicit confirmation first
+alwaysApply: true
+---
+
+# Production requires confirmation
+
+Eric's standing order: work only on local/preview unless he explicitly confirms production.
+
+Before any of the following, stop and ask Eric in chat. Wait for a clear yes.
+
+- Fukomo production: `fukomo.com`, PM2 `next-salon`, port `:3000`, nginx for that host, `/var/www/next-salon/.next` used by `next start`, `.env.production`
+- Work production: `work.iseosalon.com`, systemd `:8001`, nginx for that host
+- Restart, rebuild, deploy, patch compiled/build output, change production env, or edit files in a way that the live process will load
+- Git commit/push that is meant to ship production
+
+Local/preview only (no extra confirmation): Work `:3001`/`:8002`, Fukomo `:3002` / `next dev`.
+
+Preview databases must stay separate from production:
+
+- Fukomo preview: `salon_master_preview` + `*_preview` tenant DBs. Never `salon_master` / `next-salon` / live tenant URIs from `stores.dbUri`.
+- Work preview: `work_preview`. Never `work_production`.
+- One-way snapshot production → preview is allowed only to seed an isolated test DB. Never the reverse.
+
+## Local test data never goes to production
+
+For every bugfix and every new feature: **change scripts/code only**. Never copy, migrate, mongorestore, insert, upsert, or sync local/preview/trial/test data into production databases.
+
+That includes appointments, customers, invoices, work orders, staff, services, packages, and any other documents created while testing on `:3001` / `:3002` / `:8002`. Production data stays production data. Local testing stays in `*_preview` / `work_preview`.
+
+A report that production is broken is not permission to change it. Diagnose and propose the fix; apply on production only after Eric confirms. Code/script deploy still requires his yes. Data copy is never part of the deploy.

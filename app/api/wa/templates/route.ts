@@ -2,6 +2,7 @@ import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission, checkPermissionWithSession } from '@/lib/rbac';
 import { getWaProviderConfigForPurpose, createBalesOtomatisTemplate, testBalesOtomatisWaba, pickBestMetaTemplates, extractTemplateVariables, appendWaTemplateHistory, parseMetaTimestamp, type MetaTemplateBest, type WaTemplateHistoryEntry } from '@/lib/waProvider';
+import { annotateWabaTemplate, applyFolderLabels, belongsToCurrentFolder, bindingFromSettings, groupTemplatesIntoFolders, stampWabaBinding } from '@/lib/wabaBinding';
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -15,12 +16,14 @@ export async function GET(request: NextRequest, props: any) {
         }
 
         let isWaba = false;
+        let wabaBinding = bindingFromSettings(null, '');
         try {
             const settings = await Settings.findOne({}).lean();
             const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
             if (waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba') {
                 isWaba = true;
                 const { secretKey, licensesKey } = waConfig.balesotomatis;
+                wabaBinding = bindingFromSettings(settings, licensesKey);
                 const result = await testBalesOtomatisWaba(secretKey, licensesKey);
                 if (result.success && result.templates && Array.isArray(result.templates)) {
                     // Ciutkan list Meta jadi SATU entri terbaik per nama SEBELUM reconcile, supaya
@@ -29,8 +32,10 @@ export async function GET(request: NextRequest, props: any) {
                     const localTemplates = await WaTemplate.find({});
                     const matchedNames = new Set<string>();
 
-                    // 1) Reconcile status template lokal yang cocok dengan entri Meta terbaik.
+                    // 1) Reconcile HANYA template di folder nomor setting ini (atau belum masuk folder).
+                    // Jangan pindahkan template folder nomor lain — itu folder terpisah.
                     for (const loc of localTemplates) {
+                        if (!belongsToCurrentFolder(loc, wabaBinding)) continue;
                         const cleanLoc = String(loc.name || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
                         const candidates = [cleanLoc, String(loc.name || '').toLowerCase(), String(loc.metaTemplateName || '').toLowerCase()];
                         let hit: MetaTemplateBest | undefined;
@@ -47,6 +52,10 @@ export async function GET(request: NextRequest, props: any) {
                         if (loc.metaStatus !== hit.status) { loc.metaStatus = hit.status; changed = true; }
                         if (loc.metaTemplateName !== hitName) { loc.metaTemplateName = hitName; changed = true; }
                         if (loc.metaTemplateId !== nextId) { loc.metaTemplateId = nextId; changed = true; }
+                        const prevFp = loc.wabaLicensesFingerprint;
+                        const prevPhone = loc.wabaPhone;
+                        stampWabaBinding(loc, wabaBinding);
+                        if (loc.wabaLicensesFingerprint !== prevFp || loc.wabaPhone !== prevPhone) changed = true;
 
                         // Riwayat pendaftaran: kalau belum ada riwayat sama sekali, seed SATU baseline
                         // pakai tanggal registrasi asli dari Meta (bukan "sekarang") supaya template lama
@@ -89,9 +98,19 @@ export async function GET(request: NextRequest, props: any) {
                         if (changed) await loc.save();
                     }
 
-                    // 2) Buat template lokal untuk entri Meta yang belum ada padanannya di lokal.
+                    // 2) Entri Meta yang belum ada di FOLDER nomor setting ini → buat di folder ini.
+                    const currentFolderKey = wabaBinding.phone || '';
+                    const namesInCurrentFolder = new Set(
+                        localTemplates
+                            .filter((loc: any) => belongsToCurrentFolder(loc, wabaBinding))
+                            .flatMap((loc: any) => [
+                                String(loc.metaTemplateName || '').toLowerCase(),
+                                String(loc.name || '').toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                            ].filter(Boolean))
+                    );
                     for (const [metaName, b] of best) {
-                        if (matchedNames.has(metaName)) continue;
+                        if (matchedNames.has(metaName) || namesInCurrentFolder.has(metaName)) continue;
+                        if (!currentFolderKey) continue;
                         const bodyText = b.content || metaName;
                         const vars = b.content ? extractTemplateVariables(b.content) : [];
                         await WaTemplate.create({
@@ -103,6 +122,8 @@ export async function GET(request: NextRequest, props: any) {
                             metaTemplateName: metaName,
                             metaTemplateId: b.templateId || undefined,
                             metaVariables: vars.length ? vars : undefined,
+                            wabaPhone: wabaBinding.phone || undefined,
+                            wabaLicensesFingerprint: wabaBinding.fingerprint || undefined,
                             metaHistory: appendWaTemplateHistory(undefined, {
                                 action: 'synced',
                                 status: b.status,
@@ -115,6 +136,21 @@ export async function GET(request: NextRequest, props: any) {
             }
         } catch (e) {
             // Ignore sync error so list fetch still succeeds
+        }
+
+        // Template tanpa nomor → masuk folder nomor yang sedang dipakai di Pengaturan.
+        if (isWaba && wabaBinding.phone) {
+            const unfiled = await WaTemplate.find({
+                $or: [
+                    { wabaPhone: { $exists: false } },
+                    { wabaPhone: null },
+                    { wabaPhone: '' },
+                ],
+            });
+            for (const loc of unfiled) {
+                stampWabaBinding(loc, wabaBinding);
+                await loc.save();
+            }
         }
 
         const { searchParams } = new URL(request.url);
@@ -148,8 +184,24 @@ export async function GET(request: NextRequest, props: any) {
         }
 
         const templates = await WaTemplate.find(query).sort({ createdAt: -1 });
+        let data = templates.map((t: any) => {
+            const o = typeof t.toObject === 'function' ? t.toObject() : t;
+            return { ...o, ...annotateWabaTemplate(o, wabaBinding) };
+        });
+        if (assignable && isWaba) {
+            data = data.filter((t: any) => t.usable);
+        }
 
-        return NextResponse.json({ success: true, data: templates, waba: isWaba });
+        return NextResponse.json({
+            success: true,
+            data,
+            waba: isWaba,
+            currentWabaPhone: wabaBinding.phone || '',
+            folders: applyFolderLabels(
+                groupTemplatesIntoFolders(data, wabaBinding),
+                (await Settings.findOne({}).lean() as any)?.wabaTemplateFolderLabels,
+            ),
+        });
     } catch (error: any) {
         return NextResponse.json(
             { success: false, error: error?.message || 'Failed to fetch WA templates' },
@@ -205,12 +257,22 @@ export async function POST(request: NextRequest, props: any) {
         let metaVariables: string[] | undefined;
         let metaWarning: string | undefined;
         let metaHistory: WaTemplateHistoryEntry[] | undefined;
+        let wabaPhone: string | undefined;
+        let wabaLicensesFingerprint: string | undefined;
+
+        const settings = await Settings.findOne({}).lean();
+        const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
+        const bo = waConfig.balesotomatis;
+        const isWaba = waConfig.provider === 'balesotomatis' && bo?.mode === 'waba';
+        if (isWaba && bo && bo.mode === 'waba') {
+            const bind = bindingFromSettings(settings, bo.licensesKey || '');
+            wabaPhone = bind.phone || undefined;
+            wabaLicensesFingerprint = bind.fingerprint || undefined;
+        }
 
         if (submitToMeta) {
-            const settings = await Settings.findOne({}).lean();
-            const waConfig = getWaProviderConfigForPurpose(settings, 'campaign');
-            if (waConfig.provider === 'balesotomatis' && waConfig.balesotomatis?.mode === 'waba') {
-                const { secretKey, licensesKey } = waConfig.balesotomatis;
+            if (isWaba && bo && bo.mode === 'waba') {
+                const { secretKey, licensesKey } = bo;
                 const result = await createBalesOtomatisTemplate(secretKey, licensesKey, name, message, metaCategory);
                 if (result.success) {
                     metaStatus = 'PENDING';
@@ -239,6 +301,8 @@ export async function POST(request: NextRequest, props: any) {
             metaTemplateName: metaTemplateName || undefined,
             metaVariables,
             metaHistory,
+            wabaPhone,
+            wabaLicensesFingerprint,
         });
 
         return NextResponse.json({ success: true, data: template, warning: metaWarning });

@@ -33,6 +33,11 @@ vi.mock('@/lib/tenantDb', () => ({
     Staff: {},
     Service: {
       findById: vi.fn(),
+      find: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          lean: vi.fn().mockResolvedValue([]),
+        }),
+      }),
     },
     // generateInvoiceNumber() (POST + PUT invoice creation) re-reads models and uses Counter.
     Counter: {
@@ -61,6 +66,12 @@ vi.mock('@/lib/errorHandler', () => ({
 
 vi.mock('@/lib/waFollowUp', () => ({
   scheduleFollowUp: vi.fn(),
+}));
+
+vi.mock('@/lib/workIntegration', () => ({
+  shouldSkipAutoInvoice: vi.fn(() => false),
+  afterAppointmentSaved: vi.fn(async () => null),
+  ensureDraftInvoice: vi.fn(),
 }));
 
 describe('Appointments API', () => {

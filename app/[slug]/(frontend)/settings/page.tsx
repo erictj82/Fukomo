@@ -82,6 +82,7 @@ interface Settings {
     balesotomatisNumberId: string;
     balesotomatisSecretKey: string;
     balesotomatisLicensesKey: string;
+    balesotomatisWabaPhone: string;
     greetingEnabled: boolean;
     membershipExpiryReminderDays: number;
     packageExpiryReminderDays: number;
@@ -241,6 +242,7 @@ export default function SettingsPage() {
         balesotomatisNumberId: "",
         balesotomatisSecretKey: "",
         balesotomatisLicensesKey: "",
+        balesotomatisWabaPhone: "",
         greetingEnabled: true,
         membershipExpiryReminderDays: 30,
         packageExpiryReminderDays: 30,
@@ -442,6 +444,7 @@ export default function SettingsPage() {
                     balesotomatisNumberId: data.data.balesotomatisNumberId || "",
                     balesotomatisSecretKey: data.data.balesotomatisSecretKey || "",
                     balesotomatisLicensesKey: data.data.balesotomatisLicensesKey || "",
+                    balesotomatisWabaPhone: data.data.balesotomatisWabaPhone || "",
                     greetingEnabled: data.data.greetingEnabled ?? true,
                     membershipExpiryReminderDays: data.data.membershipExpiryReminderDays || 30,
                     packageExpiryReminderDays: data.data.packageExpiryReminderDays || 30,
@@ -585,7 +588,14 @@ export default function SettingsPage() {
                     devices,
                 });
             } else {
-                setWaConnectionTestResult({ success: true, message: data.message || "Koneksi WABA berhasil." });
+                if (data.detectedWabaPhone && !settings.balesotomatisWabaPhone) {
+                    setSettings({ ...settings, balesotomatisWabaPhone: data.detectedWabaPhone });
+                }
+                setWaConnectionTestResult({
+                    success: true,
+                    message: data.message || "Koneksi WABA berhasil.",
+                    templates: data.templates,
+                });
             }
         } catch (error) {
             console.error("Error testing WA connection:", error);
@@ -1751,8 +1761,14 @@ export default function SettingsPage() {
                                         onChange={(e) => setSettings({ ...settings, balesotomatisLicensesKey: e.target.value })}
                                         placeholder="WB-xxxx"
                                     />
+                                    <FormInput
+                                        label="Nomor WABA (yang terdaftar di Meta)"
+                                        value={settings.balesotomatisWabaPhone}
+                                        onChange={(e) => setSettings({ ...settings, balesotomatisWabaPhone: e.target.value })}
+                                        placeholder="62812xxxxxxx"
+                                    />
                                     <p className="text-xs text-green-700">
-                                        Campaign &amp; blast pakai WhatsApp Business API resmi dari Meta — aman dari ban, bisa kirim ke ribuan kontak, dan mendukung template yang di-approve Meta.
+                                        Isi nomor WhatsApp Business cabang ini. Nomor itu jadi <strong>folder template</strong> yang aktif. Ganti nomor di setting = folder nomor lain yang dipakai.
                                     </p>
                                 </div>
                             </div>
@@ -1857,6 +1873,15 @@ export default function SettingsPage() {
                                             onChange={(e) => setSettings({ ...settings, balesotomatisLicensesKey: e.target.value })}
                                             placeholder="WB-xxxx"
                                         />
+                                        <FormInput
+                                            label="Nomor WABA (yang terdaftar di Meta)"
+                                            value={settings.balesotomatisWabaPhone}
+                                            onChange={(e) => setSettings({ ...settings, balesotomatisWabaPhone: e.target.value })}
+                                            placeholder="62812xxxxxxx"
+                                        />
+                                        <p className="text-xs text-gray-500">
+                                            Nomor ini jadi folder template yang aktif. Ganti nomor = folder lain yang dipakai.
+                                        </p>
                                         <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                                             <p className="text-xs text-blue-800">
                                                 Mode ini butuh customer chat duluan dalam 24 jam terakhir untuk pesan bebas teks

@@ -39,6 +39,7 @@ export interface IRole {
         calendarView: { view: boolean };
         activityLogs: { view: boolean };
         settings: { view: boolean; edit: boolean };
+        corrections: IPermission;
         [key: string]: any; // Allow dynamic permissions for future modules
     };
     isSystem: boolean; // Prevent deleting system roles like 'Admin'
@@ -102,7 +103,8 @@ const RoleSchema = new Schema<IRole>(
                 aiReports: { view: false },
                 calendarView: { view: false },
                 activityLogs: { view: false },
-                settings: { view: false, edit: false }
+                settings: { view: false, edit: false },
+                corrections: { view: 'none', create: false, edit: false, delete: false },
             }
         }
     },

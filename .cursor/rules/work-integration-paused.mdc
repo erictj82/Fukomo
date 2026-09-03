@@ -1,0 +1,28 @@
+---
+description: Fukomo↔Work integration is paused — do not mix it into other Fukomo work
+alwaysApply: true
+---
+
+# Work integration = PAUSED (31 Aug 2026)
+
+Eric parked the local Fukomo↔Work WO link to focus on other Fukomo features. Do not resume, expand, debug, or deploy it unless he explicitly says to continue the Work integration.
+
+## Do not touch unless asked
+
+These are the paused integration surface (leave as-is):
+
+- `lib/workIntegration.ts`
+- `app/api/integrations/work/**`
+- Work catalog sync in `app/api/services/**`
+- Visit dispatch on appointment Processing / cancel / no-show
+- `WORK_BASE_URL` / `WORK_INTEGRATION_KEY` in `.env.development.local`
+
+On Work (`/var/www/work`): `backend/fukomo_integration.py`, `FUKOMO_TENANT_BRANCH_MAP` in `.env.preview`, `tests/test_fukomo_integration.py`.
+
+## Other Fukomo features
+
+- Implement the requested feature only. Do not "also fix" integration, tenant→branch mapping, or WO callbacks.
+- Do not commit, rebuild, or ship the files above together with unrelated Fukomo changes.
+- Preview `:3002` may still have the integration env on. Ignore that; new features should work even if Work is down.
+
+To unpause later, Eric will say to continue the Work integration.

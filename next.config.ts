@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["187.52.127.54"],
 
   images: {
     unoptimized: true,
@@ -33,7 +34,7 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' https://api.openai.com;",
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' http://187.52.127.54:3001 http://187.52.127.54:3002 ws://187.52.127.54:3001 ws://187.52.127.54:3002 http://127.0.0.1:3002 ws://127.0.0.1:3002 https://api.openai.com;",
           },
         ],
       },

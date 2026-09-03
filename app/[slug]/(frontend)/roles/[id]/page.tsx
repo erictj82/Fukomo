@@ -25,6 +25,7 @@ const RESOURCES = [
     { key: "users", label: "User Management" },
     { key: "roles", label: "Role Management" },
     { key: "invoices", label: "Invoices & Billing" },
+    { key: "corrections", label: "Correction Requests", createLabel: "REQUEST_CORRECTION", editLabel: "APPROVE_CORRECTION" },
     { key: "deposits", label: "Deposits / Down Payment" },
     { key: "vouchers", label: "Vouchers & Promotions" },
     { key: "bundles", label: "Service Bundles" },
@@ -296,7 +297,7 @@ export default function EditRolePage() {
                                                         onChange={(e) => handlePermissionChange(res.key, 'create', e.target.checked)}
                                                         className="w-4 h-4 text-green-600 rounded focus:ring-green-600 border-gray-300"
                                                     />
-                                                    <span className="text-sm text-gray-600 group-hover:text-gray-900">Create</span>
+                                                    <span className="text-sm text-gray-600 group-hover:text-gray-900">{(res as any).createLabel || "Create"}</span>
                                                 </label>
                                                 <label className="flex items-center gap-2 cursor-pointer group">
                                                     <input
@@ -305,7 +306,7 @@ export default function EditRolePage() {
                                                         onChange={(e) => handlePermissionChange(res.key, 'edit', e.target.checked)}
                                                         className="w-4 h-4 text-amber-600 rounded focus:ring-amber-600 border-gray-300"
                                                     />
-                                                    <span className="text-sm text-gray-600 group-hover:text-gray-900">Edit</span>
+                                                    <span className="text-sm text-gray-600 group-hover:text-gray-900">{(res as any).editLabel || "Edit"}</span>
                                                 </label>
                                                 <label className="flex items-center gap-2 cursor-pointer group">
                                                     <input

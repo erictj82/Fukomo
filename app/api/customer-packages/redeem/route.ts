@@ -21,7 +21,7 @@ interface ServiceQuotaEntry {
 
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
-    const { CustomerPackage, PackageUsageLedger } = await getTenantModels(tenantSlug);
+    const { CustomerPackage, PackageUsageLedger, Invoice, Appointment } = await getTenantModels(tenantSlug);
 
   try {
     const permissionError = await checkPermission(request, 'invoices', 'create');
@@ -44,6 +44,19 @@ export async function POST(request: NextRequest, props: any) {
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ success: false, error: 'Redeem items are required' }, { status: 400 });
+    }
+
+    if (invoiceId) {
+      const invoice = await Invoice.findById(invoiceId);
+      if (invoice?.appointment) {
+        const apt = await Appointment.findById(invoice.appointment);
+        if (apt && ['cancelled', 'no-show'].includes(apt.status)) {
+          return NextResponse.json(
+            { success: false, error: 'Paket tidak boleh dipotong untuk appointment yang dibatalkan atau no-show.' },
+            { status: 400 }
+          );
+        }
+      }
     }
 
     for (const item of items) {

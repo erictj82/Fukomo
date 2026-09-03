@@ -3,6 +3,7 @@ import { getMasterModels } from './masterDb';
 import { getTenantModels } from './tenantDb';
 import { sendWhatsApp } from '@/lib/fonnte';
 import { getWaProviderConfigForPurpose, sendTemplateViaBalesOtomatis, getBalesOtomatisTemplateId, buildTemplateParameters, extractTemplateVariables, type BalesOtomatisWabaConfig } from '@/lib/waProvider';
+import { bindingFromSettings, templateFolderKey, templateSendReady } from '@/lib/wabaBinding';
 import { addMessageVariation } from '@/lib/messageVariation';
 import { validateMessageContent } from '@/lib/messageValidator';
 import { runDueBackups } from './backup';
@@ -927,6 +928,16 @@ export async function processPendingWaSchedules(now: Date = new Date()): Promise
                     let result;
                     if (wabaConfig) {
                         // ---- JALUR WABA: Send Template (pre-approved Meta) ----
+                        const bind = bindingFromSettings(followUpSettings, wabaConfig.licensesKey);
+                        if (!templateSendReady(template, bind)) {
+                            const errMsg = templateFolderKey(template) !== (bind.phone || '_unfiled')
+                                ? `Template tidak aktif: ada di folder nomor lain, setting sedang pakai folder ${bind.phone || 'nomor setting'}.`
+                                : 'Template WABA belum APPROVED / belum masuk folder nomor di Pengaturan.';
+                            console.error(`[WaSchedule:${slug}] Schedule ${schedule._id} failed: ${errMsg}`);
+                            await WaSchedule.findByIdAndUpdate(schedule._id, { status: 'failed', error: errMsg });
+                            totalFailed += 1;
+                            continue;
+                        }
                         const metaName = String(template.metaTemplateName || template.name || '').trim();
                         if (!metaName) {
                             const errMsg = 'Template WABA belum punya nama Meta (metaTemplateName kosong). Daftarkan & approve template di menu Template WhatsApp.';
@@ -1084,6 +1095,13 @@ export function startWaScheduler() {
                 await processAutomations();
             } catch (e) {
                 console.error('[SCHEDULER] processAutomations error:', e);
+            }
+            try {
+                const { markOverdueAppointmentsNoShow } = await import('@/lib/workIntegration');
+                const n = await markOverdueAppointmentsNoShow();
+                if (n > 0) console.log(`[SCHEDULER] Auto no-show: ${n} appointment`);
+            } catch (e) {
+                console.error('[SCHEDULER] markOverdueAppointmentsNoShow error:', e);
             }
             try {
                 const backup = await runDueBackups();

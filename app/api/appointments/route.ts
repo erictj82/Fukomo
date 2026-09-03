@@ -13,6 +13,7 @@ import { checkPermission } from "@/lib/rbac";
 import { handleApiError } from "@/lib/errorHandler";
 import { scheduleFollowUp } from "@/lib/waFollowUp";
 import { generateInvoiceNumber } from "@/lib/invoiceNumber";
+import { shouldSkipAutoInvoice, afterAppointmentSaved, ensureDraftInvoice } from "@/lib/workIntegration";
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -82,6 +83,19 @@ export async function GET(request: NextRequest, props: any) {
 
         const appointments = await Appointment.aggregate(pipeline);
 
+        for (const apt of appointments) {
+            if (apt?.status === 'processing') {
+                try {
+                    await ensureDraftInvoice(tenantSlug, apt, {
+                        wo_id: apt.workOrderId,
+                        wo_number: apt.workOrderNumber,
+                    });
+                } catch (e) {
+                    console.error('[appointments] ensure draft failed', apt?._id, e);
+                }
+            }
+        }
+
         return NextResponse.json({
             success: true,
             data: appointments,
@@ -110,8 +124,20 @@ export async function POST(request: NextRequest, props: any) {
 
         const body = await request.json();
 
-        if (!body.customer || !body.staff || !body.startTime || !body.services || !Array.isArray(body.services) || body.services.length === 0) {
-            return NextResponse.json({ success: false, error: "Customer, staff, time slot and at least one service are required" }, { status: 400 });
+        if (!body.customer || !body.startTime || !body.services || !Array.isArray(body.services) || body.services.length === 0) {
+            return NextResponse.json({ success: false, error: "Customer, time slot and at least one service are required" }, { status: 400 });
+        }
+        const svcIds = body.services.map((s: any) => s.service).filter(Boolean);
+        if (svcIds.length) {
+            const docs = await Service.find({ _id: { $in: svcIds } }).select("description").lean();
+            const byId = new Map(docs.map((d: any) => [String(d._id), String(d.description || "").trim()]));
+            body.services = body.services.map((s: any) => {
+                const d = String(s.description || byId.get(String(s.service)) || "").trim();
+                return d ? { ...s, description: d } : s;
+            });
+        }
+        if (!body.staff || String(body.staff).trim() === '') {
+            delete body.staff;
         }
 
         if (body.status && typeof body.status === 'object' && body.status.target) {
@@ -172,12 +198,20 @@ export async function POST(request: NextRequest, props: any) {
             discount,
             tax,
             totalAmount,
-            commission
+            commission,
+            statusHistory: [{
+                status: body.status || 'pending',
+                at: new Date(),
+                by: 'user',
+                note: 'Appointment dibuat',
+            }],
         }) as unknown as IAppointment;
 
         // [B15 FIX] Hapus branch || !appointment.status — appointment tanpa status dianggap 'pending',
         // tidak boleh langsung dibuatkan invoice
-        if (appointment.status === 'confirmed' || appointment.status === 'completed') {
+        // WO integration: invoice final only after Work completes. Skip auto-invoice when enabled.
+        if ((appointment.status === 'confirmed' || appointment.status === 'completed')
+            && !shouldSkipAutoInvoice(appointment.status)) {
             // [BE-08 FIX] generateInvoiceNumber dipindah ke dalam try-catch
             // [BE-03 FIX] Counter di-rollback jika Invoice.create gagal
             try {
@@ -191,6 +225,7 @@ export async function POST(request: NextRequest, props: any) {
                         item: s.service,
                         itemModel: 'Service',
                         name: s.name,
+                        description: String(s.description || '').trim() || undefined,
                         price: s.price || 0,
                         quantity: 1,
                         total: s.price || 0
@@ -227,6 +262,12 @@ export async function POST(request: NextRequest, props: any) {
                 } catch (_) { /* best-effort rollback */ }
                 throw invoiceError;
             }
+        }
+
+        try {
+            await afterAppointmentSaved(tenantSlug, appointment);
+        } catch (syncErr: any) {
+            console.error('[appointments] work sync failed', syncErr);
         }
 
         return NextResponse.json({ success: true, data: appointment });

@@ -17,6 +17,7 @@ import { useSettings } from "@/components/providers/SettingsProvider";
 interface Service {
     _id: string;
     name: string;
+    description?: string;
     duration: number;
     price: number;
     commissionType?: 'percentage' | 'fixed';
@@ -160,12 +161,12 @@ export default function CalendarPage() {
             const endDateTime = addMinutes(startDateTime, totalDuration);
             const endTime = format(endDateTime, "HH:mm");
 
-            const payload = {
+            const payload: any = {
                 customer: formData.customerId,
-                staff: formData.staffId,
                 services: selectedServices.map(s => ({
                     service: s._id,
                     name: s.name,
+                    description: (s.description || "").trim() || undefined,
                     price: s.price,
                     duration: s.duration
                 })),
@@ -340,7 +341,6 @@ export default function CalendarPage() {
                             </div>
                             <SearchableSelect placeholder="Select Customer" required value={formData.customerId} onChange={(v) => setFormData({ ...formData, customerId: v })} options={customers.map(c => ({ value: c._id, label: `${c.name} (${c.phone || 'No phone'})` }))} />
                         </div>
-                        <SearchableSelect label="Staff" placeholder="Select Staff" required value={formData.staffId} onChange={(v) => setFormData({ ...formData, staffId: v })} options={staffList.map(s => ({ value: s._id, label: s.name }))} />
                     </div>
 
                     <MultiSearchableSelect label="Services" placeholder="Select Services" required value={formData.serviceIds} onChange={(vs) => setFormData({ ...formData, serviceIds: vs })} options={services.map(s => ({ value: s._id, label: `${s.name} (${settings.symbol}${s.price})` }))} />
@@ -348,34 +348,27 @@ export default function CalendarPage() {
                     <div className="space-y-3">
                         <label className="text-sm font-bold text-gray-700 flex items-center gap-2 px-1">
                             <Clock className="w-4 h-4 text-blue-900" />
-                            Available Time Slots
+                            Jam (08:00–20:00)
                         </label>
-                        {formData.staffId && formData.date ? (
-                            availableSlots.length > 0 ? (
-                                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 p-4 bg-gray-50/50 border border-gray-100 rounded-2xl max-h-48 overflow-y-auto">
-                                    {availableSlots.map((slot, idx) => (
-                                        <button
-                                            key={idx}
-                                            type="button"
-                                            onClick={() => setFormData({ ...formData, startTime: slot.startTime })}
-                                            className={`px-2 py-3 text-[11px] font-black rounded-xl border transition-all ${formData.startTime === slot.startTime
-                                                ? "bg-blue-900 text-white border-blue-900 shadow-md transform scale-105"
-                                                : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-900 hover:bg-white shadow-sm"}`}
-                                        >
-                                            {slot.startTime}
-                                        </button>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="p-8 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/30 text-xs text-gray-400 text-center font-bold">
-                                    {loadingSlots ? "Checking availability..." : "No free slots for this selection."}
-                                </div>
-                            )
-                        ) : (
-                            <div className="p-8 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/30 text-xs text-gray-400 text-center font-bold">
-                                Select staff and date to see free spots
-                            </div>
-                        )}
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 p-4 bg-gray-50/50 border border-gray-100 rounded-2xl max-h-48 overflow-y-auto">
+                            {Array.from({ length: ((20 - 8) * 60) / 15 + 1 }, (_, i) => {
+                                const total = 8 * 60 + i * 15;
+                                const hh = String(Math.floor(total / 60)).padStart(2, "0");
+                                const mm = String(total % 60).padStart(2, "0");
+                                return `${hh}:${mm}`;
+                            }).map((slot) => (
+                                <button
+                                    key={slot}
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, startTime: slot })}
+                                    className={`px-2 py-3 text-[11px] font-black rounded-xl border transition-all ${formData.startTime === slot
+                                        ? "bg-blue-900 text-white border-blue-900 shadow-md transform scale-105"
+                                        : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-900 hover:bg-white shadow-sm"}`}
+                                >
+                                    {slot}
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     <div className="p-5 bg-gradient-to-br from-blue-900 via-indigo-900 to-blue-900 rounded-2xl text-white shadow-2xl relative overflow-hidden group">
@@ -399,7 +392,7 @@ export default function CalendarPage() {
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <FormSelect label="Booking Status" value={formData.status} onChange={(e: any) => setFormData({ ...formData, status: e.target.value })} options={[{ value: "pending", label: "Pending" }, { value: "confirmed", label: "Confirmed" }, { value: "completed", label: "Completed" }, { value: "cancelled", label: "Cancelled" }]} />
+                        <FormSelect label="Booking Status" value={formData.status} onChange={(e: any) => setFormData({ ...formData, status: e.target.value })} options={[{ value: "pending", label: "Pending" }, { value: "confirmed", label: "Confirmed" }, { value: "processing", label: "Processing" }, { value: "completed", label: "Completed" }, { value: "cancelled", label: "Cancelled" }]} />
                         <FormInput label="Quick Notes" value={formData.notes} onChange={(e: any) => setFormData({ ...formData, notes: e.target.value })} placeholder="Internal notes..." />
                     </div>
 

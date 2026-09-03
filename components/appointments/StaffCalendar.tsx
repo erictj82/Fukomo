@@ -44,10 +44,13 @@ export default function StaffCalendar({ onSelectEvent, refreshTrigger, slug }: S
             const res = await fetch("/api/staff?isActive=true", { headers: { "x-store-slug": slug } });
             const data = await res.json();
             if (data.success) {
-                setResources(data.data.map((s: any) => ({
+                setResources([
+                    { id: "unassigned", title: "Unassigned" },
+                    ...data.data.map((s: any) => ({
                     id: s._id,
                     title: s.name
-                })));
+                    })),
+                ]);
             }
         } catch (error) {
             console.error("Error fetching staff for calendar:", error);
@@ -77,16 +80,17 @@ export default function StaffCalendar({ onSelectEvent, refreshTrigger, slug }: S
             if (data.success) {
                 const formattedEvents = data.data.map((apt: any) => {
                     const aptDate = moment(apt.date).format("YYYY-MM-DD");
+                    const staffName = apt.staff?.name || "Unassigned";
                     return {
                         id: apt._id,
-                        title: `${apt.customer.name} (${apt.staff.name})`,
+                        title: `${apt.customer?.name || "Customer"} (${staffName})`,
                         start: moment(`${aptDate} ${apt.startTime}`, "YYYY-MM-DD HH:mm").toDate(),
                         end: moment(`${aptDate} ${apt.endTime}`, "YYYY-MM-DD HH:mm").toDate(),
-                        resourceId: apt.staff._id,
+                        resourceId: apt.staff?._id || "unassigned",
                         status: apt.status,
-                        customer: apt.customer.name,
-                        staffName: apt.staff.name,
-                        services: apt.services.map((s: any) => s.name)
+                        customer: apt.customer?.name || "",
+                        staffName,
+                        services: (apt.services || []).map((s: any) => s.name)
                     };
                 });
                 setEvents(formattedEvents);

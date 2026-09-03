@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermissionWithSession } from '@/lib/rbac';
 import { getBalesOtomatisInfo, testBalesOtomatisWaba } from '@/lib/waProvider';
+import { extractWabaPhoneFromPayload } from '@/lib/wabaBinding';
 
 // Sengaja gak nyimpen apa-apa ke DB - ini cuma "coba dulu sebelum simpen", dipanggil
 // dari halaman Settings pas user klik tombol "Test Koneksi" sebelum submit form.
@@ -17,11 +18,13 @@ export async function POST(request: NextRequest) {
             if (!result.success) {
                 return NextResponse.json({ success: false, error: result.error }, { status: 400 });
             }
+            const detectedPhone = extractWabaPhoneFromPayload({ templates: result.templates });
             return NextResponse.json({ 
                 success: true, 
                 message: `Koneksi WABA berhasil. Ditemukan ${result.templateCount || 0} template di Meta.`, 
                 templates: result.templates || [],
-                templateCount: result.templateCount || 0
+                templateCount: result.templateCount || 0,
+                detectedWabaPhone: detectedPhone || '',
             });
         }
 

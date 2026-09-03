@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Edit, Plus, Search, Trash2, MessageSquareText, History } from "lucide-react";
+import { ChevronDown, Edit, Folder, Pencil, Plus, Search, Trash2, MessageSquareText, History } from "lucide-react";
 import Modal from "@/components/dashboard/Modal";
 import FormInput, { FormButton, FormSelect, FormTextArea } from "@/components/dashboard/FormInput";
 import PermissionGate from "@/components/PermissionGate";
@@ -24,6 +24,10 @@ interface WaTemplate {
     metaTemplateName?: string;
     metaCategory?: string;
     metaHistory?: WaTemplateHistoryEntry[];
+    wabaPhone?: string;
+    wabaLicensesFingerprint?: string;
+    usable?: boolean;
+    unusableReason?: string | null;
     createdAt: string;
 }
 
@@ -68,6 +72,12 @@ export default function WaTemplatesPage() {
     const [wabaLoading, setWabaLoading] = useState(false);
     const [wabaError, setWabaError] = useState<string | null>(null);
     const [isWabaMode, setIsWabaMode] = useState(false);
+    const [currentWabaPhone, setCurrentWabaPhone] = useState("");
+    const [folders, setFolders] = useState<{ key: string; phone: string; label: string; active: boolean; templates: WaTemplate[] }[]>([]);
+    const [renamingKey, setRenamingKey] = useState<string | null>(null);
+    const [renameDraft, setRenameDraft] = useState("");
+    const [renamingSaving, setRenamingSaving] = useState(false);
+    const [expandedInactive, setExpandedInactive] = useState<Record<string, boolean>>({});
     const [submittingMetaId, setSubmittingMetaId] = useState<string | null>(null);
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -104,6 +114,7 @@ export default function WaTemplatesPage() {
             if (data.success) {
                 setIsWabaMode(data.isWaba);
                 setWabaTemplates(data.templates || []);
+                if (data.currentWabaPhone) setCurrentWabaPhone(data.currentWabaPhone);
             } else {
                 setIsWabaMode(Boolean(data.isWaba));
                 if (data.isWaba) setWabaError(data.error);
@@ -121,10 +132,12 @@ export default function WaTemplatesPage() {
             const query = new URLSearchParams();
             if (search.trim()) query.append("search", search.trim());
 
-            const res = await fetch(`/api/wa/templates?${query.toString()}`);
+            const res = await fetch(`/api/wa/templates?${query.toString()}`, { headers: { "x-store-slug": slug } });
             const data = await res.json();
             if (data.success) {
                 setTemplates(data.data || []);
+                if (typeof data.currentWabaPhone === "string") setCurrentWabaPhone(data.currentWabaPhone);
+                setFolders(Array.isArray(data.folders) ? data.folders : []);
             }
         } finally {
             setLoading(false);
@@ -272,150 +285,144 @@ export default function WaTemplatesPage() {
         }
     };
 
-    return (
-        <div className="max-w-6xl mx-auto space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Manajemen Template WA</h1>
-                    <p className="text-sm text-gray-500">Kelola template pesan WhatsApp untuk greeting dan follow-up otomatis.</p>
-                </div>
-                <PermissionGate resource="waTemplates" action="create">
-                    <button
-                        onClick={() => openModal()}
-                        className="px-4 py-2 bg-blue-900 text-white rounded-lg hover:bg-blue-800 transition-all flex items-center gap-2 font-semibold"
-                    >
-                        <Plus className="w-4 h-4" />
-                        Template Baru
-                    </button>
-                </PermissionGate>
-            </div>
+    const handleSyncFolders = async () => {
+        await fetchWabaTemplates();
+        await fetchTemplates();
+    };
 
-            {/* WABA Meta Templates Section */}
-            {isWabaMode && (
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-200 shadow-sm p-5 space-y-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <span className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
-                                <h2 className="text-lg font-bold text-gray-900">Template WhatsApp Business API Resmi (Meta)</h2>
-                            </div>
-                            <p className="text-xs text-gray-600 mt-1">
-                                Template resmi di-approve Meta untuk pengingat (reminder) & follow-up di luar window 24 jam.
-                            </p>
-                        </div>
+    const startRenameFolder = (folder: { key: string; label: string }) => {
+        setRenamingKey(folder.key);
+        setRenameDraft(folder.label);
+    };
+
+    const saveRenameFolder = async (folderKey: string) => {
+        setRenamingSaving(true);
+        try {
+            const res = await fetch("/api/wa/template-folders", {
+                method: "PUT",
+                headers: { "x-store-slug": slug, "Content-Type": "application/json" },
+                body: JSON.stringify({ key: folderKey, label: renameDraft }),
+            });
+            const data = await res.json();
+            if (!data.success) {
+                alert(data.error || "Gagal rename folder");
+                return;
+            }
+            setFolders((prev) => prev.map((f) => (f.key === folderKey ? { ...f, label: data.label } : f)));
+            setRenamingKey(null);
+        } finally {
+            setRenamingSaving(false);
+        }
+    };
+
+    const folderPhoneHint = (folder: { phone: string }) => {
+        if (!folder.phone) return "belum ada nomor";
+        return folder.phone.startsWith("62") ? `+${folder.phone}` : folder.phone;
+    };
+
+    const displayFolders = folders.length > 0
+        ? folders
+        : [{ key: "all", phone: currentWabaPhone, label: "Semua template", active: true, templates }];
+
+    const renderFolderHeading = (folder: { key: string; phone: string; label: string; active: boolean; templates: WaTemplate[] }, expanded: boolean) => (
+        <div className={`px-4 py-3 flex flex-wrap items-center justify-between gap-2 ${folder.active ? "bg-emerald-50 border-b border-emerald-200" : "bg-gray-100"}`}>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+                {!folder.active && (
+                    <button
+                        type="button"
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedInactive((prev) => ({ ...prev, [folder.key]: !prev[folder.key] }))}
+                        className="p-1 rounded hover:bg-white/70 text-gray-500"
+                        title={expanded ? "Tutup folder" : "Buka folder"}
+                    >
+                        <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                    </button>
+                )}
+                <Folder className={`w-4 h-4 shrink-0 ${folder.active ? "text-emerald-700" : "text-gray-500"}`} />
+                {renamingKey === folder.key ? (
+                    <form
+                        className="flex flex-wrap items-center gap-2 flex-1 min-w-0"
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            saveRenameFolder(folder.key);
+                        }}
+                    >
+                        <input
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            placeholder="Contoh: Nomor lama Pusat 0812..."
+                            className="flex-1 min-w-[12rem] px-2 py-1 text-sm border border-gray-300 rounded-lg bg-white"
+                        />
+                        <button
+                            type="submit"
+                            disabled={renamingSaving}
+                            className="px-2 py-1 text-xs font-semibold rounded-lg bg-blue-900 text-white disabled:opacity-50"
+                        >
+                            {renamingSaving ? "..." : "Simpan"}
+                        </button>
                         <button
                             type="button"
-                            onClick={fetchWabaTemplates}
-                            disabled={wabaLoading}
-                            className="px-4 py-2 bg-emerald-700 text-white text-sm font-semibold rounded-lg hover:bg-emerald-800 transition-all shadow-sm disabled:opacity-50 flex items-center gap-2 self-start sm:self-center"
+                            onClick={() => setRenamingKey(null)}
+                            className="px-2 py-1 text-xs rounded-lg border border-gray-300 text-gray-600"
                         >
-                            <span>🔄</span>
-                            {wabaLoading ? "Menyiapkan..." : "Sync & Cek Status Meta"}
+                            Batal
                         </button>
-                    </div>
-
-                    {wabaError && (
-                        <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
-                            {wabaError}
-                        </div>
-                    )}
-
-                    {!wabaLoading && !wabaError && wabaTemplates.length === 0 && (
-                        <div className="p-4 bg-white/80 border border-green-100 rounded-lg text-center text-sm text-gray-500">
-                            Belum ada template yang ditemukan di akun WABA Meta Anda. Buat template melalui dashboard penyedia WABA Anda, lalu klik Sync.
-                        </div>
-                    )}
-
-                    {wabaTemplates.length > 0 && (
-                        <div className="divide-y divide-gray-200 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-                            {wabaTemplates.map((t: any, idx: number) => {
-                                const tName = t.name || t.template_name || `Template #${idx + 1}`;
-                                const tStatus = String(t.status || t.template_status || "UNKNOWN").toUpperCase();
-                                const tLang = t.language || t.template_language || "id";
-                                const tCat = t.category || t.template_category || "UTILITY";
-                                
-                                const isApproved = tStatus === "APPROVED";
-                                const isPending = tStatus === "PENDING" || tStatus === "IN_REVIEW";
-                                const isRejected = tStatus === "REJECTED";
-
-                                return (
-                                    <div key={t.id || tName} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-semibold text-sm text-gray-900 font-mono">{tName}</span>
-                                                <span className="text-[10px] uppercase tracking-wider bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">
-                                                    {tLang} • {tCat}
-                                                </span>
-                                            </div>
-                                            {t.components && (
-                                                <p className="text-xs text-gray-500 line-clamp-2">
-                                                    {t.components.find((c: any) => c.type === 'BODY')?.text || "Template WABA tersinkronisasi dari server Meta"}
-                                                </p>
-                                            )}
-                                        </div>
-                                        <div className="flex items-center self-start sm:self-center">
-                                            {isApproved ? (
-                                                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-sm">
-                                                    <span>🟢</span> Approved (Siap Dipakai!)
-                                                </span>
-                                            ) : isPending ? (
-                                                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 shadow-sm">
-                                                    <span>🟡</span> Sedang Ditinjau Meta
-                                                </span>
-                                            ) : isRejected ? (
-                                                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300 shadow-sm">
-                                                    <span>🔴</span> Ditolak Meta
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-full bg-gray-100 text-gray-700">
-                                                    <span>⚪</span> {tStatus}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                {activeGreetingTemplate ? (
-                    <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                        <span className="font-semibold">Greeting aktif saat ini:</span> {activeGreetingTemplate.name}
-                    </div>
+                    </form>
                 ) : (
-                    <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                        Belum ada template greeting yang aktif. Aktifkan salah satu template untuk auto greeting.
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {!folder.active ? (
+                                <button
+                                    type="button"
+                                    className="font-semibold text-gray-900 truncate text-left"
+                                    onClick={() => setExpandedInactive((prev) => ({ ...prev, [folder.key]: !prev[folder.key] }))}
+                                >
+                                    {folder.label}
+                                </button>
+                            ) : (
+                                <h2 className="font-semibold text-gray-900 truncate">{folder.label}</h2>
+                            )}
+                            <span className="text-xs text-gray-500">{folder.templates.length} template</span>
+                            <PermissionGate resource="waTemplates" action="edit">
+                                <button
+                                    type="button"
+                                    title="Rename folder (tulis nomor telp pemilik template ini)"
+                                    onClick={() => startRenameFolder(folder)}
+                                    className="p-1 rounded text-gray-500 hover:text-gray-800 hover:bg-white/80"
+                                >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                            </PermissionGate>
+                        </div>
+                        <p className="text-[11px] text-gray-500">
+                            Nomor: {folderPhoneHint(folder)}
+                        </p>
                     </div>
                 )}
             </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                <div className="relative max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-                    <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Cari template..."
-                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg"
-                    />
-                </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                {loading ? (
-                    <div className="p-8 text-sm text-gray-500">Memuat template...</div>
-                ) : templates.length === 0 ? (
-                    <div className="p-10 text-center text-gray-500">
-                        <MessageSquareText className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                        Belum ada template WA.
-                    </div>
+            {isWabaMode && (
+                folder.active ? (
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Aktif — nomor di setting</span>
                 ) : (
-                    <div className="divide-y divide-gray-100">
-                        {templates.map((template) => (
-                            <div key={template._id} className="p-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full bg-gray-200 text-gray-600 border border-gray-300">Tidak aktif</span>
+                )
+            )}
+        </div>
+    );
+
+    const renderFolderBody = (folder: { active: boolean; templates: WaTemplate[] }) => (
+        folder.templates.length === 0 ? (
+            <div className="p-6 text-sm text-gray-500">Folder ini masih kosong. Sync atau buat template baru saat nomor ini dipakai di Pengaturan.</div>
+        ) : (
+            <div className="divide-y divide-gray-100 bg-white">
+                {folder.templates.map((template) => renderTemplateCard(template, folder.active))}
+            </div>
+        )
+    );
+
+    const renderTemplateCard = (template: WaTemplate, folderActive: boolean) => (
+                            <div key={template._id} className={`p-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between ${folderActive ? "" : "opacity-70"}`}>
                                 <div className="space-y-2 flex-1">
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <h3 className="font-semibold text-gray-900">{template.name}</h3>
@@ -430,24 +437,14 @@ export default function WaTemplatesPage() {
                                                 Greeting Active
                                             </span>
                                         )}
-                                        {isWabaMode && (
-                                            template.metaStatus === 'APPROVED' ? (
-                                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-sm flex items-center gap-1">
-                                                    🟢 Approved Meta (Siap Jalan!)
-                                                </span>
-                                            ) : template.metaStatus === 'PENDING' ? (
-                                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 shadow-sm flex items-center gap-1">
-                                                    🟡 Menunggu Review Meta
-                                                </span>
-                                            ) : template.metaStatus === 'REJECTED' ? (
-                                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 shadow-sm flex items-center gap-1">
-                                                    🔴 Ditolak Meta
-                                                </span>
-                                            ) : (
-                                                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 border border-gray-300 flex items-center gap-1">
-                                                    ⚪ Belum ke Meta
-                                                </span>
-                                            )
+                                        {isWabaMode && template.metaStatus === 'PENDING' && (
+                                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">🟡 Review Meta</span>
+                                        )}
+                                        {isWabaMode && template.metaStatus === 'REJECTED' && (
+                                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300">🔴 Ditolak Meta</span>
+                                        )}
+                                        {isWabaMode && template.usable && (
+                                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">🟢 Aktif</span>
                                         )}
                                     </div>
                                     <p className="text-sm text-gray-600 whitespace-pre-wrap">{template.message}</p>
@@ -455,6 +452,11 @@ export default function WaTemplatesPage() {
                                         <div className="font-semibold text-gray-700 mb-1">Preview:</div>
                                         {renderPreview(template.message)}
                                     </div>
+                                    {isWabaMode && template.unusableReason && (
+                                        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                                            {template.unusableReason}
+                                        </p>
+                                    )}
                                     {openHistoryId === template._id && (
                                         <div className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
                                             <div className="font-semibold text-slate-700 flex items-center gap-1">
@@ -484,19 +486,17 @@ export default function WaTemplatesPage() {
                                             className={`px-3 py-2 border rounded-lg text-sm flex items-center gap-1 transition-colors ${openHistoryId === template._id
                                                 ? "border-slate-400 bg-slate-100 text-slate-800"
                                                 : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
-                                            title="Lihat riwayat pendaftaran template ke Meta"
                                         >
                                             <History className="w-4 h-4" /> Riwayat{template.metaHistory && template.metaHistory.length > 0 ? ` (${template.metaHistory.length})` : ""}
                                         </button>
                                     )}
-                                    {isWabaMode && template.metaStatus !== 'APPROVED' && (
+                                    {isWabaMode && folderActive && template.metaStatus !== 'APPROVED' && (
                                         <PermissionGate resource="waTemplates" action="edit">
                                             <button
                                                 type="button"
                                                 disabled={submittingMetaId === template._id}
                                                 onClick={() => handleSubmitToMeta(template)}
-                                                className="px-3 py-2 border border-emerald-400 bg-emerald-50 rounded-lg text-sm font-semibold text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 shadow-sm transition-all disabled:opacity-50"
-                                                title="Ajukan persetujuan template ini ke Meta agar bisa dikirim di luar batas 24 jam"
+                                                className="px-3 py-2 border border-emerald-400 bg-emerald-50 rounded-lg text-sm font-semibold text-emerald-700 hover:bg-emerald-100 flex items-center gap-1 disabled:opacity-50"
                                             >
                                                 <span>🚀</span> {submittingMetaId === template._id ? "Mengajukan..." : "Ajukan ke Meta"}
                                             </button>
@@ -533,10 +533,96 @@ export default function WaTemplatesPage() {
                                     </PermissionGate>
                                 </div>
                             </div>
-                        ))}
+    );
+
+    return (
+        <div className="max-w-6xl mx-auto space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">Manajemen Template WA</h1>
+                    <p className="text-sm text-gray-500">Kelola template pesan WhatsApp untuk greeting dan follow-up otomatis.</p>
+                </div>
+                <PermissionGate resource="waTemplates" action="create">
+                    <button
+                        onClick={() => openModal()}
+                        className="px-4 py-2 bg-blue-900 text-white rounded-lg hover:bg-blue-800 transition-all flex items-center gap-2 font-semibold"
+                    >
+                        <Plus className="w-4 h-4" />
+                        Template Baru
+                    </button>
+                </PermissionGate>
+            </div>
+
+            {isWabaMode && (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <p className="text-sm text-gray-600">
+                        Template dikelompokkan per nomor. Setting sedang pakai{" "}
+                        <strong>{currentWabaPhone ? `folder ${currentWabaPhone.startsWith("62") ? "+" : ""}${currentWabaPhone}` : "belum ada nomor"}</strong>
+                        {" "}→ hanya folder itu yang terbuka. Folder tidak aktif ada di drop menu — rename sesuai nomor telp-nya.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={handleSyncFolders}
+                        disabled={wabaLoading}
+                        className="px-4 py-2 bg-emerald-700 text-white text-sm font-semibold rounded-lg hover:bg-emerald-800 disabled:opacity-50"
+                    >
+                        {wabaLoading ? "Menyinkron..." : "Sync ke folder nomor setting"}
+                    </button>
+                </div>
+            )}
+            {wabaError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                    {wabaError}
+                </div>
+            )}
+
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                {activeGreetingTemplate ? (
+                    <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                        <span className="font-semibold">Greeting aktif saat ini:</span> {activeGreetingTemplate.name}
+                    </div>
+                ) : (
+                    <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        Belum ada template greeting yang aktif. Aktifkan salah satu template untuk auto greeting.
                     </div>
                 )}
             </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                <div className="relative max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                    <input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Cari template..."
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg"
+                    />
+                </div>
+            </div>
+
+            {loading ? (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 text-sm text-gray-500">Memuat template...</div>
+            ) : templates.length === 0 && displayFolders.every((f) => f.templates.length === 0) ? (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-10 text-center text-gray-500">
+                    <MessageSquareText className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    Belum ada template WA.
+                </div>
+            ) : (
+                <div className="space-y-4">
+                    {displayFolders.map((folder) => {
+                        const expanded = folder.active || Boolean(expandedInactive[folder.key]);
+                        return (
+                            <div
+                                key={folder.key}
+                                className={`rounded-xl border shadow-sm overflow-hidden ${folder.active ? "border-emerald-300 bg-white" : "border-gray-200 bg-gray-50"}`}
+                            >
+                                {renderFolderHeading(folder, expanded)}
+                                {expanded ? renderFolderBody(folder) : null}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
 
             <Modal isOpen={isModalOpen} onClose={closeModal} title={editingTemplate ? "Edit Template WA" : "Tambah Template WA"}>
                 <form onSubmit={handleSubmit}>

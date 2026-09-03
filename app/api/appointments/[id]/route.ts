@@ -7,6 +7,7 @@ import { checkPermission } from "@/lib/rbac";
 import { handleApiError } from "@/lib/errorHandler";
 import { scheduleFollowUp } from "@/lib/waFollowUp";
 import { generateInvoiceNumber } from "@/lib/invoiceNumber";
+import { shouldSkipAutoInvoice, afterAppointmentSaved, ensureDraftInvoice } from "@/lib/workIntegration";
 
 export async function GET(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -24,6 +25,17 @@ export async function GET(request: NextRequest, props: any) {
 
         if (!appointment) {
             return NextResponse.json({ success: false, error: "Appointment not found" }, { status: 404 });
+        }
+
+        if (appointment.status === 'processing') {
+            try {
+                await ensureDraftInvoice(tenantSlug, appointment, {
+                    wo_id: appointment.workOrderId,
+                    wo_number: appointment.workOrderNumber,
+                });
+            } catch (e) {
+                console.error('[appointments] ensure draft failed', id, e);
+            }
         }
 
         return NextResponse.json({ success: true, data: appointment });
@@ -57,6 +69,18 @@ export async function PUT(request: NextRequest, props: any) {
             cleanBody.status = cleanBody.status.target.value;
         }
 
+        if (Array.isArray(cleanBody.services) && cleanBody.services.length) {
+            const svcIds = cleanBody.services.map((s: any) => s.service?._id || s.service).filter(Boolean);
+            if (svcIds.length) {
+                const docs = await Service.find({ _id: { $in: svcIds } }).select("description").lean();
+                const byId = new Map(docs.map((d: any) => [String(d._id), String(d.description || "").trim()]));
+                cleanBody.services = cleanBody.services.map((s: any) => {
+                    const d = String(s.description || byId.get(String(s.service?._id || s.service)) || "").trim();
+                    return d ? { ...s, description: d } : s;
+                });
+            }
+        }
+
         const services = cleanBody.services || existingAppointment.services;
         const staffId = cleanBody.staff || existingAppointment.staff;
         const discount = cleanBody.discount !== undefined
@@ -68,22 +92,65 @@ export async function PUT(request: NextRequest, props: any) {
         const totalAmount = (subtotal + tax) - discount;
 
         let totalCommission = 0;
+        const catalogDescriptions = new Map<string, string>();
         for (const item of services) {
             const serviceId = item.service?._id || item.service;
             const service = await Service.findById(serviceId);
             const commValue = Number(service?.commissionValue || 0);
             totalCommission += commValue;
+            const desc = String(service?.description || "").trim();
+            if (serviceId && desc) catalogDescriptions.set(String(serviceId), desc);
         }
+
+        const prevStatus = existingAppointment.status;
+        const nextStatus = cleanBody.status || prevStatus;
+
+        if (nextStatus === 'cancelled' && !String(cleanBody.cancelReason || cleanBody.notes || '').trim()) {
+            return NextResponse.json({ success: false, error: "Alasan pembatalan wajib diisi." }, { status: 400 });
+        }
+
+        if (['processing', 'completed'].includes(prevStatus) && cleanBody.services) {
+            const oldKey = (existingAppointment.services || []).map((s: any) => String(s.service)).sort().join(',');
+            const newKey = (cleanBody.services || []).map((s: any) => String(s.service?._id || s.service)).sort().join(',');
+            if (oldKey !== newKey) {
+                return NextResponse.json({
+                    success: false,
+                    error: "Add-on layanan hanya bisa ditambah dari Work Order di Work, bukan dari appointment Fukomo.",
+                }, { status: 400 });
+            }
+        }
+
+        if (!cleanBody.staff || String(cleanBody.staff).trim() === '') delete cleanBody.staff;
+
+        const historyNote = nextStatus === 'cancelled'
+            ? String(cleanBody.cancelReason || '').trim()
+            : String(cleanBody.statusNote || '').trim();
 
         const appointment = await Appointment.findByIdAndUpdate(id, {
             ...cleanBody,
             subtotal,
             tax,
             totalAmount,
-            commission: totalCommission
+            commission: totalCommission,
+            ...(nextStatus === 'cancelled' ? { cancelReason: String(cleanBody.cancelReason || '').trim() } : {}),
         }, { new: true });
 
-        if (appointment && (appointment.status === 'confirmed' || appointment.status === 'completed')) {
+        if (appointment && cleanBody.status && cleanBody.status !== prevStatus) {
+            await Appointment.findByIdAndUpdate(id, {
+                $push: {
+                    statusHistory: {
+                        status: cleanBody.status,
+                        fromStatus: prevStatus,
+                        at: new Date(),
+                        by: 'user',
+                        note: historyNote,
+                    },
+                },
+            });
+        }
+
+        if (appointment && (appointment.status === 'confirmed' || appointment.status === 'completed')
+            && !shouldSkipAutoInvoice(appointment.status)) {
 
             const existingInvoice = await Invoice.findOne({ appointment: id });
 
@@ -95,14 +162,18 @@ export async function PUT(request: NextRequest, props: any) {
                     invoiceNumber,
                     customer: appointment.customer,
                     appointment: appointment._id,
-                    items: appointment.services.map((s: any) => ({
+                    items: appointment.services.map((s: any) => {
+                        const sid = String(s.service?._id || s.service || "");
+                        return {
                         item: s.service,
                         itemModel: 'Service',
                         name: s.name,
+                        description: String(s.description || catalogDescriptions.get(sid) || '').trim() || undefined,
                         price: s.price,
                         quantity: 1,
                         total: s.price
-                    })),
+                    };
+                    }),
                     subtotal: appointment.subtotal,
                     tax: appointment.tax,
                     discount: appointment.discount || 0,
@@ -132,14 +203,18 @@ export async function PUT(request: NextRequest, props: any) {
                 existingInvoice.status !== 'paid'
             ) {
                 await Invoice.findByIdAndUpdate(existingInvoice._id, {
-                    items: appointment.services.map((s: any) => ({
+                    items: appointment.services.map((s: any) => {
+                        const sid = String(s.service?._id || s.service || "");
+                        return {
                         item: s.service,
                         itemModel: 'Service',
                         name: s.name,
+                        description: String(s.description || catalogDescriptions.get(sid) || '').trim() || undefined,
                         price: s.price || 0,
                         quantity: 1,
                         total: s.price || 0
-                    })),
+                    };
+                    }),
                     subtotal: appointment.subtotal,
                     tax: appointment.tax,
                     discount: appointment.discount || 0,
@@ -167,6 +242,15 @@ export async function PUT(request: NextRequest, props: any) {
             { appointment: appointment._id, status: { $nin: ['cancelled', 'voided'] } },
             { $set: { date: newDate } }
           );
+        }
+
+        try {
+            await afterAppointmentSaved(tenantSlug, appointment, prevStatus);
+        } catch (syncErr: any) {
+            return NextResponse.json(
+                { success: false, error: syncErr?.message || 'Gagal sinkron ke Work. Coba lagi.' },
+                { status: 502 }
+            );
         }
 
         return NextResponse.json({ success: true, data: appointment });

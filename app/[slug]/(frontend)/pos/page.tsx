@@ -46,6 +46,7 @@ import {
 interface Item {
   _id: string;
   name: string;
+  description?: string;
   price: number;
   memberPrice?: number;
   image?: string;
@@ -69,6 +70,7 @@ interface Item {
   bundleServices?: {
     service: string;
     serviceName: string;
+    serviceDescription?: string;
     servicePrice: number;
     duration: number;
     commissionType?: string;
@@ -92,6 +94,12 @@ interface CartItem extends Item {
   discountNote?: string;
   sellingBy?: string;
   sellingCommission?: number;
+  lineKey?: string;
+  lockedFromWork?: boolean;
+  performerNames?: string;
+  sellingByName?: string;
+  addedAt?: string;
+  workHistory?: { at?: string; event?: string; staffName?: string; note?: string }[];
 }
 
 interface Customer {
@@ -150,6 +158,7 @@ interface CustomerDealOption {
 interface PackageClaim {
   enabled: boolean;
   customerPackageId: string;
+  usedQty?: number;
 }
 
 interface PaymentEntry {
@@ -317,6 +326,7 @@ export default function POSPage() {
   const [isAppointmentsModalOpen, setIsAppointmentsModalOpen] = useState(false);
   const [todayAppointments, setTodayAppointments] = useState<any[]>([]);
   const [loadingAppointments, setLoadingAppointments] = useState(false);
+  const [expandedNotaId, setExpandedNotaId] = useState<string | null>(null);
 
   // Reports Modal State
   const [isReportsModalOpen, setIsReportsModalOpen] = useState(false);
@@ -389,30 +399,85 @@ export default function POSPage() {
 
       if (data.success && data.data) {
         const apt = data.data;
+        if (apt.status === "cancelled" || apt.status === "no-show") {
+          alert("Appointment dibatalkan / no-show, tidak bisa ditarik ke POS.");
+          return;
+        }
+        if (apt.status === "completed") {
+          alert("Appointment sudah selesai.");
+          return;
+        }
 
-        // Set Customer
+        const invRes = await fetch(`/api/invoices?appointmentId=${aptId}&limit=20`, { headers: storeHeaders });
+        const invData = await invRes.json();
+        const openInv = (invData.data || []).find((inv: any) => ['draft', 'pending'].includes(inv.status));
+        const paidInv = (invData.data || []).find((inv: any) => inv.status === 'paid' || inv.status === 'partially_paid');
+        if (paidInv && !openInv) {
+          alert("Nota appointment ini sudah lunas.");
+          return;
+        }
+
         const customerId = apt.customer?._id || apt.customer;
         if (customerId) {
           setSelectedCustomer(customerId);
         }
 
-        // Add items to cart
         const tempCart: CartItem[] = [];
         const tempAssignments: Record<string, StaffAssignment[]> = {};
         const tempSplitModes: Record<string, SplitMode> = {};
+        const sourceLines = openInv?.items?.length ? openInv.items : (apt.services || []);
 
-        // Appointment services
-        apt.services.forEach((s: any) => {
-          const sId = s.service?._id || s.service;
-          const matchedService = services.find((svc) => svc._id === sId);
+        sourceLines.forEach((s: any, idx: number) => {
+          if (s.removedFromWork) return;
+          const sId = s.item?._id || s.item || s.service?._id || s.service;
+          const matchedService = services.find((svc) => svc._id === String(sId));
           if (matchedService) {
-            const cartKey = getCartItemKey(matchedService._id, "Service");
-            tempCart.push({ ...matchedService, quantity: 1, price: s.price }); // use appointment price
-
-            // Assign staff from appointment
-            const staffId = apt.staff?._id || apt.staff;
-            if (staffId) {
-              tempAssignments[cartKey] = [{ staffId, percentage: 100 }];
+            const lineKey = s.fukomoLineId || `pos-${aptId}-${idx}`;
+            const cartKey = getCartItemKey(matchedService._id, "Service", undefined, lineKey);
+            const assignSrc = s.staffAssignments || [];
+            const fromSplit = assignSrc
+              .map((a: any) => ({
+                staffId: String(a.staffId?._id || a.staffId || a.staff?._id || a.staff || ""),
+                percentage: Number(a.porsiPersen ?? a.percentage ?? 0) || 0,
+              }))
+              .filter((a: StaffAssignment) => a.staffId);
+            const performerNames = s.performerNames || fromSplit.map((a: StaffAssignment) => staffList.find((st) => st._id === a.staffId)?.name).filter(Boolean).join(", ");
+            if (!fromSplit.length && performerNames) {
+              const names = String(performerNames).split(",").map((n: string) => n.trim()).filter(Boolean);
+              const resolved = names
+                .map((n: string) => staffList.find((st) => st.name.trim().toLowerCase() === n.toLowerCase()))
+                .filter(Boolean) as Staff[];
+              if (resolved.length) {
+                const base = Math.floor((100 / resolved.length) * 100) / 100;
+                resolved.forEach((st, i) => {
+                  fromSplit.push({
+                    staffId: st._id,
+                    percentage: i === resolved.length - 1 ? roundTwo(100 - base * (resolved.length - 1)) : base,
+                  });
+                });
+              }
+            }
+            const referrerId = String(s.sellingBy?._id || s.sellingBy || "");
+            const sellingByName = s.sellingByName || s.sellingBy?.name || "";
+            let sellingBy = referrerId;
+            if (!sellingBy && sellingByName) {
+              sellingBy = staffList.find((st) => st.name.trim().toLowerCase() === sellingByName.trim().toLowerCase())?._id || "";
+            }
+            const locked = Boolean(s.lockedFromWork || performerNames || sellingByName);
+            tempCart.push({
+              ...matchedService,
+              quantity: s.quantity || 1,
+              price: s.price ?? matchedService.price,
+              sellingBy,
+              sellingByName,
+              lineKey,
+              lockedFromWork: locked,
+              performerNames,
+              addedAt: s.addedAt,
+              workHistory: s.workHistory || [],
+            });
+            if (fromSplit.length) {
+              tempAssignments[cartKey] = fromSplit;
               tempSplitModes[cartKey] = "auto";
             }
           }
@@ -628,6 +693,7 @@ export default function POSPage() {
               bundleServices: (b.services || []).map((s: any) => ({
                 service: s.service?._id,
                 serviceName: s.service?.name,
+                serviceDescription: s.service?.description,
                 servicePrice: s.service?.price,
                 duration: s.service?.duration,
                 commissionType: s.commissionType || s.service?.commissionType,
@@ -681,7 +747,47 @@ export default function POSPage() {
     .filter((item) => activeCategory === "all" || (item.category && String(item.category._id) === activeCategory))
     .filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
 
-  const getCartItemKey = (itemId: string, type: string, bundleIndex?: number) => bundleIndex !== undefined ? `${type}:${itemId}-${bundleIndex}` : `${type}:${itemId}`;
+  const getCartItemKey = (itemId: string, type: string, bundleIndex?: number, lineKey?: string) => {
+    const base = lineKey ? `${type}:${lineKey}` : `${type}:${itemId}`;
+    return bundleIndex !== undefined ? `${base}-${bundleIndex}` : base;
+  };
+  const ck = (item: Pick<Item, "_id" | "type"> & { lineKey?: string }, bundleIndex?: number) =>
+    getCartItemKey(item._id, item.type, bundleIndex, item.lineKey);
+
+  const getPackageUsedQty = (item: CartItem) => {
+    const claim = packageClaims[ck(item)];
+    if (item.type !== "Service" || !claim?.enabled || !claim.customerPackageId) return 0;
+    const used = Number(claim.usedQty ?? item.quantity) || 0;
+    return Math.min(Math.max(0, used), item.quantity);
+  };
+
+  const getPayableQty = (item: CartItem) => {
+    if (item.type !== "Service") return item.quantity;
+    return Math.max(0, item.quantity - getPackageUsedQty(item));
+  };
+
+  const usedPackageQtyInCart = (customerPackageId: string, serviceId: string, serviceName?: string) =>
+    cart.reduce((sum, item) => {
+      if (item.type !== "Service") return sum;
+      const sameService =
+        String(item._id) === String(serviceId) ||
+        (!!serviceName && item.name.trim().toLowerCase() === serviceName.trim().toLowerCase());
+      if (!sameService) return sum;
+      const claim = packageClaims[ck(item)];
+      if (!claim?.enabled || claim.customerPackageId !== customerPackageId) return sum;
+      return sum + getPackageUsedQty(item);
+    }, 0);
+
+  const packageNoteFor = (item: CartItem) => {
+    const used = getPackageUsedQty(item);
+    if (!used) return "";
+    const claim = packageClaims[ck(item)];
+    const pkg = customerPackages.find((p) => p._id === claim.customerPackageId);
+    const quota = pkg?.serviceQuotas.find((q) => String(q.service) === String(item._id));
+    const remainingAfter = Math.max(0, (quota?.remainingQuota || 0) - usedPackageQtyInCart(claim.customerPackageId, item._id));
+    const totalQuota = quota?.totalQuota || 0;
+    return `pakai paket ${used}x sisa ${remainingAfter}/${totalQuota}`;
+  };
 
   const isPremiumActive = () => {
     if (!selectedCustomer || selectedCustomer === "walking-customer") return false;
@@ -773,8 +879,9 @@ export default function POSPage() {
     itemId: string,
     type: string,
     bundleIndex?: number,
+    lineKey?: string,
   ): StaffAssignment[] => {
-    const key = getCartItemKey(itemId, type, bundleIndex);
+    const key = getCartItemKey(itemId, type, bundleIndex, lineKey);
     const splitMode = serviceSplitModes[key] || "auto";
     const deduped = dedupeAssignments(serviceStaffAssignments[key] || []);
 
@@ -856,7 +963,7 @@ export default function POSPage() {
       return [...prev, { ...item, quantity: 1 }];
     });
     if (item.type === "Service") {
-      const key = getCartItemKey(item._id, item.type);
+      const key = ck(item);
       setServiceStaffAssignments((prev) => prev[key] ? prev : { ...prev, [key]: [] });
       setServiceSplitModes((prev) => prev[key] ? prev : { ...prev, [key]: "auto" });
     } else if (item.type === "Bundle" && item.bundleServices) {
@@ -945,6 +1052,19 @@ export default function POSPage() {
         return i;
       }),
     );
+    setPackageClaims((prev) => {
+      const next = { ...prev };
+      cart.forEach((item) => {
+        if (item._id !== itemId || item.type !== type) return;
+        const newQty = Math.max(1, item.quantity + delta);
+        const key = ck(item);
+        const claim = next[key];
+        if (claim?.enabled && Number(claim.usedQty || 0) > newQty) {
+          next[key] = { ...claim, usedQty: newQty };
+        }
+      });
+      return next;
+    });
   };
 
   const updateCartItemDiscount = (itemId: string, type: string, updates: Partial<{ discountType: string; discountValue: number; discountNote: string }>) => {
@@ -1117,7 +1237,7 @@ export default function POSPage() {
             customerPackageId: pkg._id,
             packageName: pkg.packageName,
             packageCode: pkg.package?.code,
-            serviceId: String(quota.service),
+            serviceId: String((quota as any).service?._id || quota.service),
             serviceName: quota.serviceName,
             remainingQuota: Number(quota.remainingQuota || 0),
             totalQuota: Number(quota.totalQuota || 0),
@@ -1129,7 +1249,7 @@ export default function POSPage() {
       });
   };
 
-  const addDealToCart = (deal: CustomerDealOption) => {
+  const applyDealToCart = (deal: CustomerDealOption) => {
     if (!selectedCustomer || selectedCustomer === "walking-customer") {
       alert("Pilih customer terdaftar dulu untuk menggunakan paket.");
       return;
@@ -1140,41 +1260,44 @@ export default function POSPage() {
       return;
     }
 
-    const service = services.find((entry) => entry._id === deal.serviceId);
-    if (!service) {
-      alert("Service untuk paket ini tidak ditemukan di master service.");
-      return;
-    }
-
-    const key = getCartItemKey(service._id, "Service");
-    const existing = cart.find(
-      (entry) => entry._id === service._id && entry.type === "Service",
+    const matching = cart.filter(
+      (entry) =>
+        entry.type === "Service" &&
+        (String(entry._id) === String(deal.serviceId) ||
+          entry.name.trim().toLowerCase() === String(deal.serviceName || "").trim().toLowerCase()),
     );
-    
-    // CEGAH QTY MELEBIHI SISA KUOTA
-    const existingQty = existing ? existing.quantity : 0;
-    if (existingQty + 1 > deal.remainingQuota) {
-      alert(`Kuota paket ini hanya tersisa ${deal.remainingQuota}. Anda tidak bisa menambahkannya lagi.`);
+    if (matching.length === 0) {
+      alert("Layanan ini belum ada di keranjang. Tambahkan jasanya dulu, lalu potong dengan paket.");
       return;
     }
 
-    const existingClaim = packageClaims[key];
-
-    if (
-      existing &&
-      (!existingClaim?.enabled ||
-        existingClaim.customerPackageId !== deal.customerPackageId)
-    ) {
-      alert(
-        `Service "${service.name}" sudah ada di cart tanpa claim paket yang sama. Hapus dulu item lama atau gunakan claim dari item yang sudah ada.`,
-      );
+    const alreadyUsed = usedPackageQtyInCart(deal.customerPackageId, deal.serviceId, deal.serviceName);
+    const remaining = deal.remainingQuota - alreadyUsed;
+    if (remaining <= 0) {
+      alert("Kuota paket untuk layanan ini sudah habis dipotong di keranjang.");
       return;
     }
 
-    addToCart(service);
-    setPackageClaimId(service._id, "Service", deal.customerPackageId);
+    const target = matching.find((entry) => getPackageUsedQty(entry) < entry.quantity) || matching[0];
+    const currentUsed = getPackageUsedQty(target);
+    const add = Math.min(remaining, target.quantity - currentUsed);
+    if (add <= 0) {
+      alert("Semua jasa di keranjang yang cocok sudah dipotong paket.");
+      return;
+    }
+
+    const key = ck(target);
+    setPackageClaims((prev) => ({
+      ...prev,
+      [key]: {
+        enabled: true,
+        customerPackageId: deal.customerPackageId,
+        usedQty: currentUsed + add,
+      },
+    }));
     setIsDealsModalOpen(false);
-    showToast("Berhasil menambahkan produk!");
+    const remainingAfter = deal.remainingQuota - alreadyUsed - add;
+    showToast(`Paket dipotong: ${deal.serviceName} ${add}x (sisa ${remainingAfter}/${deal.totalQuota})`);
   };
 
   const setPackageClaimId = (
@@ -1214,7 +1337,7 @@ export default function POSPage() {
   };
 
   const getSplitCommissionPreviewForItem = (item: CartItem) => {
-    const key = getCartItemKey(item._id, item.type);
+    const key = ck(item);
     const splitMode = serviceSplitModes[key] || "auto";
     const claim = packageClaims[key];
     const sourceType =
@@ -1224,7 +1347,7 @@ export default function POSPage() {
 
     return calculateSplitCommission({
       splitMode,
-      assignments: getEffectiveServiceAssignments(item._id, item.type).map(
+      assignments: getEffectiveServiceAssignments(item._id, item.type, undefined, item.lineKey).map(
         (assignment) => ({
           staffId: assignment.staffId,
           percentage: assignment.percentage,
@@ -1246,12 +1369,7 @@ export default function POSPage() {
     );
     const payableSubtotal = cart.reduce((sum, item) => {
       if (item.type !== "Service") return sum + getEffectivePrice(item) * item.quantity;
-
-      const key = getCartItemKey(item._id, item.type);
-      const claim = packageClaims[key];
-      if (claim?.enabled && claim.customerPackageId) return sum;
-
-      return sum + getEffectivePrice(item) * item.quantity;
+      return sum + getEffectivePrice(item) * getPayableQty(item);
     }, 0);
 
     // Voucher discount
@@ -1314,11 +1432,13 @@ export default function POSPage() {
 
     cart.forEach((item) => {
       if (item.type !== "Service") return;
-      const key = getCartItemKey(item._id, item.type);
+      const key = ck(item);
       const splitCommissionMode = serviceSplitModes[key] || "auto";
       const serviceAssignments = getEffectiveServiceAssignments(
         item._id,
         item.type,
+        undefined,
+        item.lineKey,
       );
       const serviceLineAssignments: {
         staffId: string;
@@ -1334,7 +1454,7 @@ export default function POSPage() {
         redeemItems.push({
           customerPackageId: claim.customerPackageId,
           serviceId: item._id,
-          quantity: item.quantity,
+          quantity: getPackageUsedQty(item) || item.quantity,
           serviceName: item.name,
         });
       }
@@ -1407,9 +1527,9 @@ export default function POSPage() {
       const totalOriginalPrice = item.bundleServices.reduce((sum, bs) => sum + bs.servicePrice, 0);
 
       item.bundleServices.forEach((bs, i) => {
-        const bsKey = getCartItemKey(item._id, item.type, i);
+        const bsKey = getCartItemKey(item._id, item.type, i, item.lineKey);
         const splitCommissionMode = serviceSplitModes[bsKey] || "auto";
-        const serviceAssignments = getEffectiveServiceAssignments(item._id, item.type, i);
+        const serviceAssignments = getEffectiveServiceAssignments(item._id, item.type, i, item.lineKey);
         const serviceLineAssignments: any[] = [];
 
         const proportion = totalOriginalPrice > 0 ? bs.servicePrice / totalOriginalPrice : 1 / item.bundleServices!.length;
@@ -1470,7 +1590,7 @@ export default function POSPage() {
       if (item.type !== "Product" && item.type !== "Package") return;
       if (!item.commissionValue || Number(item.commissionValue) <= 0) return;
 
-      const key = getCartItemKey(item._id, item.type);
+      const key = ck(item);
       const productStaffArr = serviceStaffAssignments[key];
       if (!productStaffArr || productStaffArr.length === 0) return;
 
@@ -1537,10 +1657,9 @@ export default function POSPage() {
     });
 
     const maxWalletAllowedSubtotal = cart.reduce((sum, item) => {
-      if (item.type === "Service" && packageClaims[getCartItemKey(item._id, item.type)]?.enabled) return sum;
       let isAllowed = false;
       if (["Service", "Product", "Bundle", "Package"].includes(item.type)) isAllowed = true;
-      if (isAllowed) return sum + getEffectivePrice(item) * item.quantity;
+      if (isAllowed) return sum + getEffectivePrice(item) * getPayableQty(item);
       return sum;
     }, 0);
     const maxWalletPaymentAllowed = Math.min(total, maxWalletAllowedSubtotal * (1 + (settings.taxRate / 100)));
@@ -1602,11 +1721,29 @@ export default function POSPage() {
   const fetchTodayAppointments = async () => {
     setLoadingAppointments(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
-      const res = await fetch(`/api/appointments?start=${today}&end=${today}`, { headers: storeHeaders });
-      const data = await res.json();
-      if (data.success) {
-        setTodayAppointments(data.data);
+      const jakartaToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
+      const aptRes = await fetch(`/api/appointments?start=${jakartaToday}&end=${jakartaToday}`, { headers: storeHeaders });
+      const aptData = await aptRes.json();
+      const [draftRes, pendingRes] = await Promise.all([
+        fetch(`/api/invoices?status=draft&limit=200`, { headers: storeHeaders }),
+        fetch(`/api/invoices?status=pending&limit=200`, { headers: storeHeaders }),
+      ]);
+      const draftData = await draftRes.json();
+      const pendingData = await pendingRes.json();
+      const invoices = [
+        ...(draftData.success ? draftData.data || [] : []),
+        ...(pendingData.success ? pendingData.data || [] : []),
+      ];
+      if (aptData.success) {
+        const rows = (aptData.data || []).map((apt: any) => {
+          const inv = invoices.find((i: any) => String(i.appointment?._id || i.appointment) === String(apt._id));
+          return { ...apt, invoice: inv || null };
+        }).filter((apt: any) => {
+          const invStatus = String(apt.invoice?.status || "");
+          const isProcessing = String(apt.status) === "processing";
+          return isProcessing && (invStatus === "draft" || invStatus === "pending");
+        });
+        setTodayAppointments(rows);
       }
     } catch (error) {
       console.error("Failed to fetch appointments:", error);
@@ -1692,26 +1829,21 @@ export default function POSPage() {
     const typesRequiringStaff = ["Service", "Product", "Package", "Bundle"];
     const unassignedItems = cart.filter(item => {
       if (!typesRequiringStaff.includes(item.type)) return false;
+      if (item.lockedFromWork || item.performerNames) return false;
 
       if (item.type === "Package") {
-        // Package pakai field `sellingBy` (single staff, buat komisi penjualan),
-        // BUKAN serviceStaffAssignments — lihat komentar di render item Package
-        // (~line 3331): UI-nya sengaja cuma nampilin "Selling By" biar match sama
-        // yang disimpan/dilaporin. Validasi ini ketinggalan waktu itu diubah, jadi
-        // selalu nganggep Package "belum di-assign" walau Selling By udah diisi.
-        return !item.sellingBy;
+        return !item.sellingBy && !item.sellingByName;
       }
 
       if (item.type === "Bundle" && item.bundleServices) {
-        // Jika bundle, cek apakah ada minimal 1 anak service yang belum di-assign
         return item.bundleServices.some((bs, idx) => {
-          const key = getCartItemKey(item._id, item.type, idx);
+          const key = getCartItemKey(item._id, item.type, idx, item.lineKey);
           const assignments = serviceStaffAssignments[key] || [];
           return assignments.length === 0 || assignments.some(a => !a.staffId);
         });
       }
 
-      const key = getCartItemKey(item._id, item.type);
+      const key = ck(item);
       const assignments = serviceStaffAssignments[key] || [];
       return assignments.length === 0 || assignments.some(a => !a.staffId);
     });
@@ -1792,8 +1924,10 @@ export default function POSPage() {
     if (isMarkedPaid) {
       // Validate empty method
       if (splitPayments.some((p) => !p.method || p.method === "Pilih Metode..." || p.method.trim() === "")) {
-        alert("Harap pilih metode pembayaran yang valid.");
-        return;
+        if (total > 0) {
+          alert("Harap pilih metode pembayaran yang valid.");
+          return;
+        }
       }
 
       // Validate manual discount reason
@@ -1843,9 +1977,7 @@ export default function POSPage() {
         const totalOriginalPrice = item.bundleServices.reduce((s, bs) => s + bs.servicePrice, 0);
         for (let i = 0; i < item.bundleServices.length; i++) {
           const bs = item.bundleServices[i];
-          const bsKey = getCartItemKey(item._id, item.type, i);
-          const rawAssignments = serviceStaffAssignments[bsKey] || [];
-          const itemAssignments = getEffectiveServiceAssignments(item._id, item.type, i);
+          const bsKey = getCartItemKey(item._id, item.type, i, item.lineKey);
           const splitMode = serviceSplitModes[bsKey] || "auto";
           const commissionType = bs.commissionType || "fixed";
           const commissionValue = Number(bs.commissionValue || 0);
@@ -1858,7 +1990,16 @@ export default function POSPage() {
             }
           }
 
+          const rawAssignments = serviceStaffAssignments[bsKey] || [];
+          const itemAssignments = getEffectiveServiceAssignments(
+            item._id,
+            item.type,
+            i,
+            item.lineKey,
+          );
+
           if (itemAssignments.length === 0) {
+            if (item.lockedFromWork || item.performerNames) continue;
             alert(`Harap pilih minimal 1 staff untuk service "${bs.serviceName}" dalam bundle "${item.name}"`);
             return;
           }
@@ -1896,11 +2037,13 @@ export default function POSPage() {
         continue;
       }
 
-      const key = getCartItemKey(item._id, item.type);
+      const key = ck(item);
       const rawAssignments = serviceStaffAssignments[key] || [];
       const itemAssignments = getEffectiveServiceAssignments(
         item._id,
         item.type,
+        undefined,
+        item.lineKey,
       );
       const splitMode = serviceSplitModes[key] || "auto";
       const commissionType = item.commissionType || "fixed";
@@ -1917,6 +2060,7 @@ export default function POSPage() {
       }
 
       if (itemAssignments.length === 0) {
+        if (item.lockedFromWork || item.performerNames) continue;
         alert(`Harap pilih minimal 1 staff untuk service "${item.name}"`);
         return;
       }
@@ -1972,7 +2116,7 @@ export default function POSPage() {
         );
         if (
           !quota ||
-          Number(quota.remainingQuota) < Number(item.quantity || 0)
+          Number(quota.remainingQuota) < getPackageUsedQty(item)
         ) {
           alert(`Kuota tidak mencukupi untuk service "${item.name}"`);
           return;
@@ -2160,6 +2304,7 @@ export default function POSPage() {
                   item: bs.service,
                   itemModel: "Service" as const,
                   name: `${bs.serviceName} (Bundle: ${item.name})`,
+                  description: (bs.serviceDescription || "").trim() || undefined,
                   price: itemPrice,
                   quantity: 1,
                   discount: itemDiscount,
@@ -2203,18 +2348,18 @@ export default function POSPage() {
           return [
             {
               ...(item.type === "Service" &&
-                packageClaims[getCartItemKey(item._id, item.type)]?.enabled
+                packageClaims[ck(item)]?.enabled
                 ? { metadata: { claimedFromPackage: true } }
                 : {}),
               ...(item.type === "Service"
                 ? {
                   splitCommissionMode:
-                    lineItemSplits[getCartItemKey(item._id, item.type)]
+                    lineItemSplits[ck(item)]
                       ?.splitCommissionMode ||
-                    serviceSplitModes[getCartItemKey(item._id, item.type)] ||
+                    serviceSplitModes[ck(item)] ||
                     "auto",
                   staffAssignments: (
-                    lineItemSplits[getCartItemKey(item._id, item.type)]
+                    lineItemSplits[ck(item)]
                       ?.staffAssignments || []
                   ).map((assignment) => ({
                     staff: assignment.staffId,
@@ -2228,13 +2373,13 @@ export default function POSPage() {
                 }
                 : (item.type === "Product" || item.type === "Package") &&
                   (
-                    lineItemSplits[getCartItemKey(item._id, item.type)]
+                    lineItemSplits[ck(item)]
                       ?.staffAssignments || []
                   ).length > 0
                   ? {
                     splitCommissionMode: "auto" as const,
                     staffAssignments: (
-                      lineItemSplits[getCartItemKey(item._id, item.type)]
+                      lineItemSplits[ck(item)]
                         ?.staffAssignments || []
                     ).map((assignment) => ({
                       staff: assignment.staffId,
@@ -2250,20 +2395,26 @@ export default function POSPage() {
               item: item._id,
               itemModel: item.type === "Bundle" ? "Service" : (item.type === "Package" ? "ServicePackage" : item.type),
               name: item.name,
-              price: item.price,
+              description: (item.description || "").trim() || undefined,
+              price: item.type === "Service" && getPayableQty(item) === 0 ? 0 : item.price,
               quantity: item.quantity,
               discount: item.discountAmount || 0,
-              discountNote: item.discountNote || undefined,
+              discountNote: packageNoteFor(item) || item.discountNote || undefined,
               sellingBy: item.sellingBy || undefined,
+              sellingByName: item.sellingByName || undefined,
+              fukomoLineId: item.lineKey && item.lockedFromWork ? item.lineKey : undefined,
+              lockedFromWork: item.lockedFromWork || undefined,
+              performerNames: item.performerNames || undefined,
+              addedAt: item.addedAt || undefined,
+              workHistory: item.workHistory || undefined,
               sellingCommission: item.sellingBy ? (
                 item.sellingCommissionType === 'percentage'
-                  ? (getEffectivePrice(item) * item.quantity * Number(item.sellingCommissionValue || 0) / 100)
-                  : (Number(item.sellingCommissionValue || 0) * item.quantity)
+                  ? (getEffectivePrice(item) * getPayableQty(item) * Number(item.sellingCommissionValue || 0) / 100)
+                  : (Number(item.sellingCommissionValue || 0) * getPayableQty(item))
               ) : 0,
               total:
-                item.type === "Service" &&
-                  packageClaims[getCartItemKey(item._id, item.type)]?.enabled
-                  ? 0
+                item.type === "Service"
+                  ? getEffectivePrice(item) * getPayableQty(item)
                   : getEffectivePrice(item) * item.quantity,
             },
           ];
@@ -2279,7 +2430,7 @@ export default function POSPage() {
         tips,
         totalAmount: total,
         commission,
-        sourceType: redeemItems.length === 0 ? "normal_sale" : "package_redeem",
+        sourceType: redeemItems.length > 0 && payableSubtotal <= 0 ? "package_redeem" : "normal_sale",
         staffAssignments: assignments.map((a) => ({
           staff: a.staffId,
           staffId: a.staffId,
@@ -2308,20 +2459,23 @@ export default function POSPage() {
         },
         medicalNotes: medicalNotes.trim() || undefined,
         acquisitionSource: acquisitionSource || undefined,
-        packageUsage: cart.filter(item => item.type === "Service" && packageClaims[getCartItemKey(item._id, item.type)]?.enabled).map(item => {
-          const claim = packageClaims[getCartItemKey(item._id, item.type)];
+        packageUsage: cart.filter(item => item.type === "Service" && getPackageUsedQty(item) > 0).map(item => {
+          const claim = packageClaims[ck(item)];
           const pkg = customerPackages.find(p => p._id === claim.customerPackageId);
           const quota = pkg?.serviceQuotas.find(q => String(q.service) === String(item._id));
+          const used = getPackageUsedQty(item);
           return {
             itemName: item.name,
-            packageName: pkg?.package?.name || "Package",
-            usedQuantity: item.quantity,
-            remainingQuota: Math.max(0, (quota?.remainingQuota || 0) - item.quantity),
+            packageName: pkg?.packageName || pkg?.package?.name || "Package",
+            usedQuantity: used,
+            remainingQuota: Math.max(0, (quota?.remainingQuota || 0) - usedPackageQtyInCart(claim.customerPackageId, item._id)),
+            totalQuota: quota?.totalQuota || 0,
             expiryDate: pkg?.expiresAt
           };
         }),
         notes:
           [
+            ...cart.filter(item => getPackageUsedQty(item) > 0).map(item => packageNoteFor(item)),
             voucherApplied
               ? `Voucher: ${voucherApplied.code} (-${settings.symbol}${voucherApplied.discountAmount.toLocaleString("id-ID")})`
               : "",
@@ -2440,6 +2594,7 @@ export default function POSPage() {
 
   const hasInvalidSplitInCart = cart.some((item) => {
     if (item.type !== "Service") return false;
+    if (item.lockedFromWork) return false;
     return !getSplitCommissionPreviewForItem(item).isValid;
   });
   const enteredPaidAmount = totalSplitPaidComputed;
@@ -2448,7 +2603,32 @@ export default function POSPage() {
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const renderStaffAssignmentBlock = (item: CartItem, customTitle?: string, bundleIndex?: number) => {
-    const key = getCartItemKey(item._id, item.type, bundleIndex);
+    const key = getCartItemKey(item._id, item.type, bundleIndex, item.lineKey);
+    if (item.lockedFromWork) {
+      const names = item.performerNames || (serviceStaffAssignments[key] || [])
+        .map((a) => staffList.find((s) => s._id === a.staffId)?.name)
+        .filter(Boolean)
+        .join(", ");
+      return (
+        <div key={key} className="w-full">
+          <p className="text-[10px] font-bold text-gray-500 mb-1">Yang mengerjakan {customTitle ? `- ${customTitle}` : ""}</p>
+          <div className="px-2 py-1.5 text-[11px] font-semibold bg-gray-50 border border-gray-200 rounded-lg text-gray-800">
+            {names || "—"}
+          </div>
+          {item.addedAt ? (
+            <p className="text-[9px] text-gray-400 mt-0.5">
+              Ditambah: {new Date(item.addedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+            </p>
+          ) : null}
+          {(item.workHistory || []).slice(-4).map((h, hi) => (
+            <p key={hi} className="text-[9px] text-gray-400">
+              {h.at ? new Date(h.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" }) : ""} {h.note || h.event}
+            </p>
+          ))}
+          <p className="text-[9px] text-gray-400 mt-0.5">Dari WO — tidak bisa diubah di POS</p>
+        </div>
+      );
+    }
     return (
       <div key={key} className="w-full">
         <div className="flex items-center justify-between mb-1.5">
@@ -2571,6 +2751,18 @@ export default function POSPage() {
 
   const renderSellingByBlock = (item: CartItem) => {
     if (!["Service", "Package", "Bundle", "Product"].includes(item.type)) return null;
+    if (item.lockedFromWork) {
+      const name = item.sellingByName || staffList.find((s) => s._id === item.sellingBy)?.name || "—";
+      return (
+        <div className="w-full">
+          <p className="text-[10px] font-bold text-gray-500 mb-1">Yang mereferensikan</p>
+          <div className="px-2 py-1.5 text-[11px] font-semibold bg-gray-50 border border-gray-200 rounded-lg text-gray-800">
+            {name}
+          </div>
+          <p className="text-[9px] text-gray-400 mt-0.5">Dari WO — tidak bisa diubah di POS</p>
+        </div>
+      );
+    }
     return (
       <div className="w-full">
         <div className="flex items-center justify-between mb-1.5">
@@ -2650,7 +2842,7 @@ export default function POSPage() {
                 </button>
               </div>
               <div className="flex items-center gap-1.5 border-l border-gray-200 pl-3">
-                <button onClick={() => { setIsAppointmentsModalOpen(true); fetchTodayAppointments(); }} className="p-2 hover:bg-gray-100 text-gray-600 rounded-lg transition-colors" title="Jadwal Hari Ini">
+                <button onClick={() => { setIsAppointmentsModalOpen(true); fetchTodayAppointments(); }} className="p-2 hover:bg-gray-100 text-gray-600 rounded-lg transition-colors" title="Draft Nota Hari Ini">
                   <Calendar className="w-5 h-5" />
                 </button>
                 <button onClick={() => setIsParkedListOpen(true)} className="p-2 hover:bg-gray-100 text-gray-600 rounded-lg relative transition-colors" title="Bon Tersimpan">
@@ -3134,7 +3326,7 @@ export default function POSPage() {
             ) : (
               cart.map((item) => (
                 <div
-                  key={`${item._id}-${item.type}`}
+                  key={`${item._id}-${item.type}-${item.lineKey || "pos"}`}
                   className="p-2 border border-gray-100 rounded-lg bg-white shadow-sm space-y-2"
                 >
                   <div className="flex items-center justify-between gap-1">
@@ -3158,8 +3350,36 @@ export default function POSPage() {
                         <p className="text-xs lg:text-sm font-bold text-gray-800 truncate">
                           {item.name}
                         </p>
+                        {String(item.description || "").trim() ? (
+                          <p className="text-[9px] lg:text-[10px] text-gray-500 leading-snug line-clamp-2">
+                            {String(item.description).trim()}
+                          </p>
+                        ) : null}
                         <p className="text-[9px] lg:text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
-                          {getEffectivePrice(item) < item.price ? (
+                          {getPackageUsedQty(item) > 0 && item.type === "Service" ? (
+                            getPayableQty(item) === 0 ? (
+                              <>
+                                <span className="line-through text-gray-400">
+                                  {settings.symbol}{item.price.toLocaleString("id-ID")}
+                                </span>
+                                <span className="font-bold text-emerald-700">
+                                  {settings.symbol}0
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="line-through text-gray-400">
+                                  {settings.symbol}{(getEffectivePrice(item) * item.quantity).toLocaleString("id-ID")}
+                                </span>
+                                <span className="font-bold text-gray-800">
+                                  {settings.symbol}{(getEffectivePrice(item) * getPayableQty(item)).toLocaleString("id-ID")}
+                                </span>
+                                <span className="text-emerald-700 font-bold">
+                                  ({getPackageUsedQty(item)}x paket, {getPayableQty(item)}x bayar)
+                                </span>
+                              </>
+                            )
+                          ) : getEffectivePrice(item) < item.price ? (
                             <>
                               <span className="line-through text-gray-400">
                                 {settings.symbol}{item.price.toLocaleString("id-ID")}
@@ -3177,33 +3397,16 @@ export default function POSPage() {
                             </span>
                           )}
                         </p>
-                        {(() => {
-                          if (item.type !== "Service") return null;
-                          const claim =
-                            packageClaims[getCartItemKey(item._id, item.type)];
-                          if (!claim?.enabled || !claim.customerPackageId)
-                            return null;
-                          const pkg = customerPackages.find(
-                            (entry) => entry._id === claim.customerPackageId,
-                          );
-                          const quota = pkg?.serviceQuotas.find(
-                            (entry) =>
-                              String(entry.service) === String(item._id),
-                          );
-
-                          return (
-                            <p className="text-[9px] lg:text-[10px] text-amber-700 font-bold truncate">
-                              Reward: {pkg?.packageName || "Paket"} (
-                              {quota
-                                ? `${quota.remainingQuota}/${quota.totalQuota}`
-                                : "Claim"}
-                              )
-                            </p>
-                          );
-                        })()}
+                        {packageNoteFor(item) ? (
+                          <p className="text-[9px] lg:text-[10px] text-emerald-700 font-bold truncate">
+                            {packageNoteFor(item)}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
+                      {!item.lockedFromWork && !item.lineKey?.startsWith("addon:") && (
+                        <>
                       <button
                         onClick={() => updateQuantity(item._id, item.type, -1)}
                         className="p-1 hover:bg-gray-200 rounded text-gray-600"
@@ -3225,6 +3428,11 @@ export default function POSPage() {
                       >
                         <Trash2 className="w-2.5 h-2.5 md:w-3 md:h-3" />
                       </button>
+                        </>
+                      )}
+                      {(item.lockedFromWork || item.lineKey?.startsWith("addon:")) && (
+                        <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">WO</span>
+                      )}
                     </div>
                   </div>
 
@@ -3301,6 +3509,12 @@ export default function POSPage() {
               <span>Subtotal</span>
               <span>{settings.symbol}{subtotal.toLocaleString("id-ID")}</span>
             </div>
+            {subtotal > payableSubtotal && (
+              <div className="flex justify-between items-center mb-2 text-sm text-emerald-700 font-semibold">
+                <span>Paket terpakai</span>
+                <span>-{settings.symbol}{(subtotal - payableSubtotal).toLocaleString("id-ID")}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center mb-4">
               <span className="text-lg font-black text-gray-900">Total Tagihan</span>
               <span className="text-2xl font-black text-blue-900">{settings.symbol}{total.toLocaleString("id-ID")}</span>
@@ -3394,66 +3608,129 @@ export default function POSPage() {
       </Modal>
       <Modal
         isOpen={isAppointmentsModalOpen}
-        onClose={() => setIsAppointmentsModalOpen(false)}
-        title="📅 Jadwal Hari Ini"
+        onClose={() => { setIsAppointmentsModalOpen(false); setExpandedNotaId(null); }}
+        title="📄 Draft Nota Hari Ini"
       >
         <div className="space-y-4">
           {loadingAppointments ? (
             <div className="text-center py-4 text-sm text-gray-500">Memuat jadwal...</div>
           ) : todayAppointments.length === 0 ? (
-            <div className="text-center py-4 text-sm text-gray-500">Tidak ada jadwal hari ini.</div>
+            <div className="text-center py-4 text-sm text-gray-500">Tidak ada draft nota hari ini.</div>
           ) : (
-            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-2">
+            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-2">
               {todayAppointments.map((apt: any) => {
                 const statusStr = String(apt.status || '').toUpperCase();
                 const isCompleted = statusStr === 'COMPLETED';
-                const isCancelled = statusStr === 'CANCELLED';
-                
-                // Color Helper
+                const isCancelled = statusStr === 'CANCELLED' || statusStr === 'NO-SHOW';
+                const inv = apt.invoice;
+                const invStatus = String(inv?.status || '');
+                const canOpen = !isCompleted && !isCancelled && invStatus !== 'paid';
+                const expanded = expandedNotaId === apt._id;
+                const lines = inv?.items?.length ? inv.items : (apt.services || []);
+                const total = inv?.totalAmount ?? apt.totalAmount ?? 0;
                 let statusColorClass = 'bg-gray-100 text-gray-700';
                 if (statusStr === 'COMPLETED') statusColorClass = 'bg-green-100 text-green-700';
+                else if (statusStr === 'PROCESSING') statusColorClass = 'bg-indigo-100 text-indigo-700';
                 else if (statusStr === 'CONFIRMED') statusColorClass = 'bg-blue-100 text-blue-700';
                 else if (statusStr === 'PENDING') statusColorClass = 'bg-orange-100 text-orange-700';
-                else if (statusStr === 'CANCELLED') statusColorClass = 'bg-red-100 text-red-700';
-
+                else if (statusStr === 'CANCELLED' || statusStr === 'NO-SHOW') statusColorClass = 'bg-red-100 text-red-700';
+                let notaLabel = 'Belum ada nota';
+                if (invStatus === 'draft') notaLabel = 'Draft nota';
+                else if (invStatus === 'pending') notaLabel = 'Siap bayar';
+                else if (invStatus === 'paid') notaLabel = 'Lunas';
+                else if (invStatus === 'partially_paid') notaLabel = 'Sebagian dibayar';
 
                 return (
-                  <div 
-                    key={apt._id} 
-                    onClick={() => {
-                      if (!isCompleted && !isCancelled) {
-                        handleLoadAppointment(apt._id);
-                      }
-                    }}
-                    className={`p-3 border border-gray-200 rounded-lg flex justify-between items-start transition-colors ${(!isCompleted && !isCancelled) ? 'cursor-pointer hover:border-blue-300 hover:bg-blue-50/50' : 'opacity-70'}`}
+                  <div
+                    key={apt._id}
+                    className={`p-3 border rounded-lg transition-colors ${canOpen ? 'border-gray-200 hover:border-blue-300' : 'border-gray-100 opacity-70'}`}
                   >
-                    <div>
-                      <div className="font-bold text-gray-800 text-sm flex items-center gap-2">
-                        {apt.customer?.name || "Pelanggan Tanpa Nama"}
-                        {(!isCompleted && !isCancelled) && (
-                          <span className="text-[10px] font-medium px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full flex items-center gap-1">
-                            <ShoppingCart className="w-3 h-3" /> Buka di POS
-                          </span>
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-gray-800 text-sm flex items-center gap-2 flex-wrap">
+                          {apt.customer?.name || "Pelanggan Tanpa Nama"}
+                          <span className={`uppercase text-[10px] px-2 py-0.5 rounded-full font-bold ${statusColorClass}`}>{apt.status}</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">{notaLabel}</span>
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {apt.startTime} – {apt.endTime}
+                          {inv?.invoiceNumber ? ` · ${inv.invoiceNumber}` : ''}
+                          {apt.workOrderNumber ? ` · WO #${apt.workOrderNumber}` : ''}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1">
+                          {(lines || []).slice(0, expanded ? 99 : 3).map((s: any) => s.name).filter(Boolean).join(', ') || 'Tidak ada layanan'}
+                          {!expanded && lines.length > 3 ? ` +${lines.length - 3}` : ''}
+                        </div>
+                        <div className="text-sm font-bold text-blue-700 mt-1">
+                          {settings.symbol}{Number(total).toLocaleString('id-ID', { maximumFractionDigits: 0 })}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          className="text-[10px] font-bold px-2 py-1 border rounded-lg text-gray-600 hover:bg-gray-50"
+                          onClick={() => setExpandedNotaId(expanded ? null : apt._id)}
+                        >
+                          {expanded ? 'Tutup' : 'Detail'}
+                        </button>
+                        {canOpen && (
+                          <button
+                            type="button"
+                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-700 text-white hover:bg-blue-800 flex items-center gap-1"
+                            onClick={() => {
+                              handleLoadAppointment(apt._id);
+                              setIsAppointmentsModalOpen(false);
+                            }}
+                          >
+                            <ShoppingCart className="w-3 h-3" /> Buka POS
+                          </button>
                         )}
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">Staf: {apt.staff?.name || "-"}</div>
-                      <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                        Status: <span className={`uppercase text-[10px] px-2 py-0.5 rounded-full font-bold ${statusColorClass}`}>{apt.status}</span>
+                    </div>
+                    {expanded && (
+                      <div className="mt-3 border-t border-gray-100 pt-2 space-y-2">
+                        {(lines || []).map((s: any, idx: number) => {
+                          const added = s.addedAt
+                            ? new Date(s.addedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+                            : null;
+                          const doer = s.performerNames
+                            || (s.staffAssignments || []).map((a: any) => a.staff?.name || a.staffId?.name).filter(Boolean).join(", ");
+                          const referrer = s.sellingByName || s.sellingBy?.name;
+                          const history = Array.isArray(s.workHistory) ? s.workHistory : [];
+                          return (
+                            <div key={idx} className="bg-gray-50 rounded-lg px-2 py-1.5">
+                              <div className="flex justify-between text-xs text-gray-800 font-semibold">
+                                <span>{s.name}{s.quantity > 1 ? ` ×${s.quantity}` : ""}{s.fukomoLineId?.startsWith("addon:") ? " · add-on" : ""}</span>
+                                <span>{settings.symbol}{Number(s.total ?? s.price ?? 0).toLocaleString("id-ID", { maximumFractionDigits: 0 })}</span>
+                              </div>
+                              <div className="text-[10px] text-gray-500 mt-0.5 space-y-0.5">
+                                {added ? <div>Ditambah: {added}</div> : null}
+                                <div>Dikerjakan: {doer || "—"}</div>
+                                <div>Direferensikan: {referrer || "—"}</div>
+                              </div>
+                              {history.length > 0 && (
+                                <div className="mt-1 border-t border-gray-200 pt-1 space-y-0.5">
+                                  {history.map((h: any, hi: number) => (
+                                    <div key={hi} className="text-[10px] text-gray-500">
+                                      {h.at ? new Date(h.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}
+                                      {h.note ? ` · ${h.note}` : h.event ? ` · ${h.event}` : ""}
+                                      {h.staffName ? ` (${h.staffName})` : ""}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {inv?.notes ? <p className="text-[11px] text-gray-500 pt-1">{inv.notes}</p> : null}
+                        <p className="text-[11px] text-gray-400 pt-1">Staf dari WO terkunci. Bisa dibayar di POS meski pekerjaan belum selesai.</p>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-bold text-blue-600 text-sm">{apt.startTime} - {apt.endTime}</div>
-                    </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
-          <div className="flex justify-end pt-2">
-            <button onClick={() => setIsAppointmentsModalOpen(false)} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-200">
-              Tutup
-            </button>
-          </div>
         </div>
       </Modal>
 
@@ -3575,7 +3852,16 @@ export default function POSPage() {
               Customer belum punya reward paket aktif.
             </p>
           ) : (
-            availableDeals.map((deal, index) => (
+            availableDeals.map((deal, index) => {
+              const inCart = cart.filter((entry) =>
+                entry.type === "Service" &&
+                (String(entry._id) === String(deal.serviceId) ||
+                  entry.name.trim().toLowerCase() === String(deal.serviceName || "").trim().toLowerCase()),
+              );
+              const inCartQty = inCart.reduce((sum, entry) => sum + entry.quantity, 0);
+              const usedHere = usedPackageQtyInCart(deal.customerPackageId, deal.serviceId, deal.serviceName);
+              const canCut = deal.isUsable && inCartQty > 0 && usedHere < inCartQty && usedHere < deal.remainingQuota;
+              return (
               <div
                 key={`${deal.customerPackageId}-${deal.serviceId}-${index}`}
                 className={`rounded-lg border p-3 ${
@@ -3595,28 +3881,34 @@ export default function POSPage() {
                       {deal.totalQuota})
                     </p>
                     <p className={`text-[11px] mt-0.5 ${deal.isUsable ? "text-amber-700" : "text-gray-500"}`}>
+                      {inCartQty > 0
+                        ? `Di keranjang: ${inCartQty} · sudah dipotong ${usedHere}x`
+                        : "Belum ada di keranjang"}
+                    </p>
+                    <p className={`text-[11px] mt-0.5 ${deal.isUsable ? "text-amber-700" : "text-gray-500"}`}>
                       Exp:{" "}
                       {deal.expiresAt
                         ? new Date(deal.expiresAt).toLocaleDateString("id-ID")
                         : "Seumur Hidup"}
                     </p>
                   </div>
-                  {deal.isUsable ? (
+                  {canCut ? (
                     <button
                       type="button"
-                      onClick={() => addDealToCart(deal)}
+                      onClick={() => applyDealToCart(deal)}
                       className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700"
                     >
-                      Masuk Cart
+                      Potong saldo
                     </button>
                   ) : (
                     <div className="shrink-0 px-3 py-1.5 rounded-lg bg-gray-300 text-gray-600 text-xs font-bold cursor-not-allowed">
-                      {deal.statusReason}
+                      {!deal.isUsable ? deal.statusReason : inCartQty === 0 ? "Belum di keranjang" : "Sudah dipotong"}
                     </div>
                   )}
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       </Modal>
@@ -3786,7 +4078,7 @@ export default function POSPage() {
             <FormButton
               onClick={() => void handleCheckout(true)}
               loading={submitting}
-              disabled={hasInvalidSplitInCart || cart.length === 0 || !splitPayments.some(p => !!p.method) || (discount > 0 && !discountReason.trim()) || ((settings.acquisitionSources?.length ?? 0) > 0 && !acquisitionSource) || totalSplitPaidComputed < total}
+              disabled={hasInvalidSplitInCart || cart.length === 0 || (total > 0 && !splitPayments.some(p => !!p.method)) || (discount > 0 && !discountReason.trim()) || ((settings.acquisitionSources?.length ?? 0) > 0 && !acquisitionSource) || totalSplitPaidComputed < total}
               variant="success"
               className="flex-[2] py-3 text-sm font-black uppercase tracking-widest shadow-lg rounded-xl"
               icon={<CreditCard className="w-5 h-5" />}

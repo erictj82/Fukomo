@@ -118,6 +118,11 @@ export default async function PublicDigitalReceiptPage(props: any) {
                                         <tr key={`n-${rIdx}`} className="text-sm">
                                             <td className="py-4 align-top">
                                                 <p className="font-bold text-gray-900">{item.name}</p>
+                                                {String(item.description || "").trim() && (
+                                                    <p className="text-[11px] text-gray-600 mt-0.5 whitespace-pre-line leading-snug">
+                                                        {String(item.description).trim()}
+                                                    </p>
+                                                )}
                                                 <div className="mt-1 space-y-0.5">
                                                     {item.itemModel === 'Service' && (
                                                         <span className="inline-block px-1.5 py-0.5 bg-purple-50 text-purple-600 text-[9px] font-bold uppercase rounded">Service</span>
@@ -128,7 +133,12 @@ export default async function PublicDigitalReceiptPage(props: any) {
                                                     {item.itemModel === 'ServicePackage' && (
                                                         <span className="inline-block px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[9px] font-bold uppercase rounded">Package</span>
                                                     )}
-                                                    {item.discount > 0 && (
+                                                    {item.discountNote && (
+                                                        <p className="text-[10px] text-emerald-700 font-bold">
+                                                            {item.discountNote}
+                                                        </p>
+                                                    )}
+                                                    {item.discount > 0 && !item.discountNote && (
                                                         <p className="text-[10px] text-red-600 font-medium italic">
                                                             * Includes discount of -{currencySymbol}{item.discount.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
                                                         </p>
@@ -168,6 +178,11 @@ export default async function PublicDigitalReceiptPage(props: any) {
                                                 <td className="py-1.5 pl-6 align-top">
                                                     <span className="text-gray-400 mr-1">↳</span>
                                                     <span className="font-medium text-gray-700">{serviceName}</span>
+                                                    {String(child.description || "").trim() ? (
+                                                        <p className="text-[10px] text-gray-500 mt-0.5 pl-4 whitespace-pre-line">
+                                                            {String(child.description).trim()}
+                                                        </p>
+                                                    ) : null}
                                                     <div className="mt-0.5">
                                                         <span className="inline-block px-1 py-0.5 bg-purple-50 text-purple-500 text-[8px] font-bold uppercase rounded">Service</span>
                                                     </div>
@@ -198,8 +213,11 @@ export default async function PublicDigitalReceiptPage(props: any) {
                                 </div>
                                 <div className="flex justify-between text-[10px] text-gray-500">
                                     <span>Paket: {pkg.packageName}</span>
-                                    <span>Sisa Kuota: <strong className="text-emerald-700 font-bold bg-emerald-100 px-1 rounded">{pkg.remainingQuota}</strong></span>
+                                    <span>Sisa: <strong className="text-emerald-700 font-bold bg-emerald-100 px-1 rounded">{pkg.remainingQuota}</strong></span>
                                 </div>
+                                <p className="text-[10px] text-emerald-700 font-bold mt-0.5">
+                                    pakai paket {pkg.usedQuantity}x sisa {pkg.remainingQuota}{pkg.totalQuota ? `/${pkg.totalQuota}` : ""}
+                                </p>
                                 {pkg.expiryDate && (
                                     <div className="text-[9px] text-gray-400 mt-1">
                                         Berlaku s/d: {new Date(pkg.expiryDate).toLocaleDateString('id-ID')}

@@ -4,17 +4,25 @@ import { PUT, DELETE } from '@/app/api/services/[id]/route';
 import { NextRequest } from 'next/server';
 
 // Mock dependencies
-vi.mock('@/lib/tenantDb', () => ({
-  getTenantModels: vi.fn().mockResolvedValue({
-    Service: {
-      find: vi.fn(),
-      countDocuments: vi.fn(),
-      create: vi.fn(),
-      findByIdAndUpdate: vi.fn(),
-    },
-    ServiceCategory: {},
-  }),
-}));
+vi.mock('@/lib/tenantDb', () => {
+  function ServiceMock(this: any, body: any) {
+    Object.assign(this, body, { _id: '1' });
+    (ServiceMock as any)._doc = this;
+    this.save = vi.fn().mockResolvedValue(this);
+  }
+  ServiceMock.find = vi.fn();
+  ServiceMock.countDocuments = vi.fn();
+  ServiceMock.create = vi.fn();
+  ServiceMock.findById = vi.fn(async () => (ServiceMock as any)._doc || null);
+  ServiceMock.findByIdAndUpdate = vi.fn();
+  ServiceMock.findByIdAndDelete = vi.fn();
+  return {
+    getTenantModels: vi.fn().mockResolvedValue({
+      Service: ServiceMock,
+      ServiceCategory: {},
+    }),
+  };
+});
 
 vi.mock('@/auth', () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: 'test-user-id' } }),
@@ -27,6 +35,12 @@ vi.mock('@/lib/rbac', async () => {
     checkPermissionWithSession: vi.fn(async () => ({ error: null, session: await authMod.auth() })),
   };
 });
+
+vi.mock('@/lib/workIntegration', () => ({
+  isWorkIntegrationEnabled: vi.fn(() => false),
+  syncCatalogServiceToWork: vi.fn(),
+  catalogFieldsChanged: vi.fn(() => false),
+}));
 
 describe('Services API', () => {
   beforeEach(() => {
@@ -95,11 +109,6 @@ describe('Services API', () => {
 
   describe('POST /api/services', () => {
     it('should create a service and normalize waFollowUp legacy days correctly', async () => {
-      const { getTenantModels } = await import('@/lib/tenantDb');
-      const models = await getTenantModels('test-tenant');
-      
-      (models.Service.create as any).mockImplementation(async (body: any) => ({ _id: '1', ...body }));
-
       const req = new NextRequest('http://localhost/api/services', {
         method: 'POST',
         headers: { 'x-store-slug': 'test-tenant' },
@@ -119,11 +128,9 @@ describe('Services API', () => {
 
       expect(res.status).toBe(200);
       expect(data.success).toBe(true);
-      expect(models.Service.create).toHaveBeenCalled();
-      
-      const createArg = (models.Service.create as any).mock.calls[0][0];
-      expect(createArg.waFollowUp.firstDays).toBe(1); // 1440 mins = 1 day
-      expect(createArg.waFollowUp.secondDays).toBe(2); // 48 hours = 2 days
+      expect(data.data.name).toBe('New Service');
+      expect(data.data.waFollowUp.firstDays).toBe(1); // 1440 mins = 1 day
+      expect(data.data.waFollowUp.secondDays).toBe(2); // 48 hours = 2 days
     });
   });
 
@@ -132,6 +139,7 @@ describe('Services API', () => {
       const { getTenantModels } = await import('@/lib/tenantDb');
       const models = await getTenantModels('test-tenant');
       
+      (models.Service.findById as any).mockResolvedValue({ _id: '1', name: 'Updated Service', skillName: 'Cut' });
       (models.Service.findByIdAndUpdate as any).mockImplementation(async (id: any, body: any) => ({ _id: id, ...body }));
 
       const req = new NextRequest('http://localhost/api/services/1', {
@@ -160,6 +168,7 @@ describe('Services API', () => {
       const { getTenantModels } = await import('@/lib/tenantDb');
       const models = await getTenantModels('test-tenant');
       
+      (models.Service.findById as any).mockResolvedValue(null);
       (models.Service.findByIdAndUpdate as any).mockResolvedValue(null);
 
       const req = new NextRequest('http://localhost/api/services/99', {

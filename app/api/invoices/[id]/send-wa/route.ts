@@ -44,7 +44,11 @@ export async function POST(request: NextRequest, props: any) {
 
         // Build items text
         const itemsText = (invoice.items || [])
-            .map((item: any) => `• ${item.name} x${item.quantity} = ${formatCurrency(item.total)}`)
+            .map((item: any) => {
+                const desc = String(item.description || '').trim();
+                const line = `• ${item.name} x${item.quantity} = ${formatCurrency(item.total)}`;
+                return desc ? `${line}\n  ${desc}` : line;
+            })
             .join('\n');
 
         const change = Math.max(0, (invoice.amountPaid || 0) - (invoice.totalAmount || 0));

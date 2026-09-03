@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       Service.find({ status: "active" })
         .populate("category", "name")
         .select(
-          "_id name price memberPrice image icon duration commissionType commissionValue sellingCommissionType sellingCommissionValue waFollowUp parentService isFavorite category"
+          "_id name description price memberPrice image icon duration commissionType commissionValue sellingCommissionType sellingCommissionValue waFollowUp parentService isFavorite category"
         )
         .sort({ name: 1 })
         .lean(),
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       Product.find({ status: "active" })
         .populate("category", "name")
         .select(
-          "_id name price memberPrice image icon stock commissionType commissionValue isFavorite category"
+          "_id name description price memberPrice image icon stock commissionType commissionValue isFavorite category"
         )
         .sort({ name: 1 })
         .lean(),
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
       ServiceBundle.find({ isActive: true })
         .populate(
           "services.service",
-          "name price commissionType commissionValue sellingCommissionType sellingCommissionValue duration"
+          "name description price commissionType commissionValue sellingCommissionType sellingCommissionValue duration"
         )
         .sort({ createdAt: -1 })
         .lean(),

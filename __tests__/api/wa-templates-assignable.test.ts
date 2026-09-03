@@ -89,4 +89,23 @@ describe('GET /api/wa/templates — assignable filter (dropdown follow-up)', () 
     const query = mockFind.mock.calls[0][0];
     expect(query.metaStatus).toBeUndefined();
   });
+
+  it('WABA-mode + assignable=1 → hanya template APPROVED yang terikat nomor setting', async () => {
+    mockGetWaProviderConfigForPurpose.mockReturnValue(WABA);
+    const { wabaLicensesFingerprint } = await import('@/lib/wabaBinding');
+    const fp = wabaLicensesFingerprint('lk');
+    mockFind.mockReturnValue({
+      sort: vi.fn().mockResolvedValue([
+        { _id: 'ok', name: 'mine', metaStatus: 'APPROVED', metaTemplateName: 'mine', wabaLicensesFingerprint: fp, wabaPhone: '62811' },
+        { _id: 'other', name: 'other', metaStatus: 'APPROVED', metaTemplateName: 'other', wabaLicensesFingerprint: 'deadbeefdeadbeef', wabaPhone: '62899' },
+      ]),
+    });
+
+    const { data } = await call('http://localhost/api/wa/templates?type=follow_up&assignable=1');
+
+    expect(data.waba).toBe(true);
+    expect(data.data).toHaveLength(1);
+    expect(data.data[0]._id).toBe('ok');
+    expect(data.data[0].usable).toBe(true);
+  });
 });

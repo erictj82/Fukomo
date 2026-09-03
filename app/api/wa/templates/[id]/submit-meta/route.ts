@@ -2,6 +2,7 @@ import { getTenantModels } from "@/lib/tenantDb";
 import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission } from '@/lib/rbac';
 import { getWaProviderConfigFromSettings, getWaProviderConfigForPurpose, createBalesOtomatisTemplate, appendWaTemplateHistory, type WaTemplateHistoryEntry } from '@/lib/waProvider';
+import { bindingFromSettings, isTemplateBoundToCurrentWaba, stampWabaBinding } from '@/lib/wabaBinding';
 
 export async function POST(request: NextRequest, props: any) {
     const tenantSlug = request.headers.get('x-store-slug') || 'pusat';
@@ -27,7 +28,21 @@ export async function POST(request: NextRequest, props: any) {
             });
         }
 
-        const { secretKey, licensesKey } = waConfig.balesotomatis;
+        const bo = waConfig.balesotomatis;
+        if (!bo || bo.mode !== 'waba') {
+            return NextResponse.json({
+                success: false,
+                error: 'WhatsApp Business API (WABA) belum aktif di Pengaturan -> WhatsApp Provider.',
+            });
+        }
+        const { secretKey, licensesKey } = bo;
+        const bind = bindingFromSettings(settings, licensesKey);
+        if (!isTemplateBoundToCurrentWaba(template, bind)) {
+            return NextResponse.json({
+                success: false,
+                error: 'Template ini ada di folder nomor lain. Ganti Nomor WABA di Pengaturan ke nomor folder itu dulu, atau daftar ulang dari folder yang aktif.',
+            }, { status: 400 });
+        }
         const result = await createBalesOtomatisTemplate(
             secretKey,
             licensesKey,
@@ -55,6 +70,7 @@ export async function POST(request: NextRequest, props: any) {
             status: reviewStatus,
             note: reviewStatus === 'APPROVED' ? 'Diajukan ke Meta & langsung disetujui' : 'Diajukan ke Meta, menunggu review',
         });
+        stampWabaBinding(template, bind);
         await template.save();
 
         const reviewNotice = result.data?.review_notice_message 

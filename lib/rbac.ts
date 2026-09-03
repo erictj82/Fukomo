@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/auth';
+import {
+    canViewCorrections,
+    hasNamedCorrectionPermission,
+} from '@/lib/correctionPerms';
 
 type Action = 'view' | 'create' | 'edit' | 'delete';
+export type CorrectionAccessAction = 'view' | 'request' | 'approve';
 
 // Return type: null = allowed, NextResponse = denied
 // Session dibawa ikut agar caller tidak perlu memanggil auth() lagi (B14 fix)
@@ -169,4 +174,54 @@ export async function getViewScope(
 export async function getCurrentUserId(): Promise<string | null> {
     const session: any = await auth();
     return session?.user?.id || null;
+}
+
+export async function requireCorrectionAccess(
+    request: NextRequest,
+    action: CorrectionAccessAction
+): Promise<PermissionResult> {
+    const session: any = await auth();
+    if (!session || !session.user) {
+        return {
+            error: NextResponse.json(
+                { success: false, error: "Unauthorized" },
+                { status: 401 }
+            ),
+            session: null,
+        };
+    }
+
+    const isSuperAdmin =
+        session.user.role === 'Super Admin' ||
+        (session.user.role && session.user.role.name === 'Super Admin');
+    const requestedSlug = request.headers.get('x-store-slug');
+    const sessionSlug = session.user.tenantSlug;
+    if (!isSuperAdmin && requestedSlug && sessionSlug && requestedSlug !== sessionSlug) {
+        return {
+            error: NextResponse.json(
+                { success: false, error: "Access Denied: Store slug mismatch" },
+                { status: 403 }
+            ),
+            session: null,
+        };
+    }
+
+    const perms = session.user.permissions;
+    const role = session.user.role;
+    let allowed = false;
+    if (action === 'view') allowed = canViewCorrections(perms, role);
+    if (action === 'request') allowed = hasNamedCorrectionPermission(perms, role, 'REQUEST_CORRECTION');
+    if (action === 'approve') allowed = hasNamedCorrectionPermission(perms, role, 'APPROVE_CORRECTION');
+
+    if (!allowed) {
+        const label = action === 'request' ? 'REQUEST_CORRECTION' : action === 'approve' ? 'APPROVE_CORRECTION' : 'corrections';
+        return {
+            error: NextResponse.json(
+                { success: false, error: `Access Denied: ${label}` },
+                { status: 403 }
+            ),
+            session: null,
+        };
+    }
+    return { error: null, session };
 }

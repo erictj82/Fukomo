@@ -20,6 +20,9 @@ import {
   Filter,
   DollarSign,
   ShoppingCart,
+  Play,
+  EyeOff,
+  Ban,
 } from "lucide-react";
 import Modal from "@/components/dashboard/Modal";
 import FormInput, {
@@ -35,6 +38,7 @@ import { useSettings } from "@/components/providers/SettingsProvider";
 interface Service {
   _id: string;
   name: string;
+  description?: string;
   duration: number;
   price: number;
   commissionType?: "percentage" | "fixed";
@@ -56,7 +60,7 @@ interface Customer {
 interface Appointment {
   _id: string;
   customer: Customer;
-  staff: Staff;
+  staff?: Staff;
   services: {
     service: Service;
     name: string;
@@ -71,7 +75,18 @@ interface Appointment {
   commission: number;
   status: string;
   notes?: string;
+  cancelReason?: string;
+  workSyncStatus?: string;
+  workOrderNumber?: string;
+  statusHistory?: { status: string; fromStatus?: string; at: string; by?: string; note?: string }[];
 }
+
+const SALON_SLOTS = Array.from({ length: ((20 - 8) * 60) / 15 + 1 }, (_, i) => {
+  const total = 8 * 60 + i * 15;
+  const hh = String(Math.floor(total / 60)).padStart(2, "0");
+  const mm = String(total % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+});
 
 export default function AppointmentsPage() {
   const { settings } = useSettings();
@@ -113,6 +128,8 @@ export default function AppointmentsPage() {
     pages: 0,
   });
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   const [formError, setFormError] = useState<string>("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
@@ -266,16 +283,20 @@ export default function AppointmentsPage() {
     }
   };
 
-  const handleStatusUpdate = async (id: string, newStatus: string) => {
+  const handleStatusUpdate = async (id: string, newStatus: string, extra: Record<string, string> = {}) => {
     try {
       const res = await fetch(`/api/appointments/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "x-store-slug": slug },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, ...extra }),
       });
       const data = await res.json();
       if (data.success) {
         fetchAppointments();
+        setCancelTarget(null);
+        setCancelReason("");
+      } else {
+        alert(data.error || "Gagal mengubah status");
       }
     } catch (error) {
       console.error("Error updating status:", error);
@@ -327,12 +348,12 @@ export default function AppointmentsPage() {
       const endDateTime = addMinutes(startDateTime, totalDuration);
       const endTime = format(endDateTime, "HH:mm");
 
-      const payload = {
+      const payload: any = {
         customer: formData.customerId,
-        staff: formData.staffId,
         services: selectedServices.map((s) => ({
           service: s._id,
           name: s.name,
+          description: (s.description || "").trim() || undefined,
           price: s.price,
           duration: s.duration,
         })),
@@ -415,7 +436,7 @@ export default function AppointmentsPage() {
 
     setFormData({
       customerId: apt.customer._id,
-      staffId: apt.staff._id,
+      staffId: apt.staff?._id || "",
       serviceIds: validServiceIds,
       startTime: apt.startTime,
       date: format(new Date(apt.date), "yyyy-MM-dd"),
@@ -582,6 +603,7 @@ export default function AppointmentsPage() {
                       <option value="">All Statuses</option>
                       <option value="pending">Pending</option>
                       <option value="confirmed">Confirmed</option>
+                      <option value="processing">Processing</option>
                       <option value="completed">Completed</option>
                       <option value="cancelled">Cancelled</option>
                       <option value="no-show">No-show</option>
@@ -682,7 +704,7 @@ export default function AppointmentsPage() {
                           <td className="px-6 py-4 whitespace-nowrap">
                             <div className="flex items-center gap-2 text-sm text-gray-700">
                               <User className="w-3.5 h-3.5 text-gray-400" />
-                              {apt.staff.name}
+                              {apt.staff?.name || "—"}
                             </div>
                           </td>
                           <td className="px-6 py-4">
@@ -710,10 +732,14 @@ export default function AppointmentsPage() {
                               className={`text-[10px] uppercase tracking-widest font-black px-2.5 py-1 rounded-full border ${
                                 apt.status === "confirmed"
                                   ? "bg-green-50 text-green-700 border-green-200"
-                                  : apt.status === "completed"
+                                  : apt.status === "processing"
+                                    ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                    : apt.status === "completed"
                                     ? "bg-blue-50 text-blue-700 border-blue-200"
                                     : apt.status === "pending"
                                       ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                                      : apt.status === "cancelled" || apt.status === "no-show"
+                                        ? "bg-red-50 text-red-700 border-red-200"
                                       : "bg-gray-100 text-gray-700 border-gray-200"
                               }`}
                             >
@@ -722,34 +748,43 @@ export default function AppointmentsPage() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                              {apt.status !== "completed" &&
-                                apt.status !== "cancelled" && (
-                                  <button
-                                    onClick={() =>
-                                      router.push(
-                                        `/pos?appointmentId=${apt._id}`,
-                                      )
-                                    }
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors whitespace-nowrap"
-                                    title="Lanjut ke POS"
-                                  >
-                                    <ShoppingCart className="w-3.5 h-3.5" />
-                                    POS
-                                  </button>
-                                )}
-                              {apt.status !== "completed" &&
-                                apt.status !== "cancelled" && (
-                                  <button
-                                    onClick={() =>
-                                      handleStatusUpdate(apt._id, "completed")
-                                    }
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors whitespace-nowrap"
-                                    title="Tandai Selesai"
-                                  >
-                                    <CheckCircle className="w-3.5 h-3.5" />
-                                    Selesai
-                                  </button>
-                                )}
+                              {apt.status === "confirmed" && (
+                                <button
+                                  onClick={() => handleStatusUpdate(apt._id, "processing")}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-white bg-indigo-700 rounded-lg hover:bg-indigo-800"
+                                  title="Processing — kirim ke Work"
+                                >
+                                  <Play className="w-3.5 h-3.5" /> Processing
+                                </button>
+                              )}
+                              {["confirmed", "processing"].includes(apt.status) && (
+                                <button
+                                  onClick={() => handleStatusUpdate(apt._id, "no-show")}
+                                  className="inline-flex items-center justify-center p-1.5 text-gray-400 hover:text-stone-700 border rounded-lg"
+                                  title="No Show"
+                                >
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {!["completed", "cancelled", "no-show"].includes(apt.status) && (
+                                <button
+                                  onClick={() => { setCancelTarget(apt); setCancelReason(""); }}
+                                  className="inline-flex items-center justify-center p-1.5 text-gray-400 hover:text-red-600 border rounded-lg"
+                                  title="Cancelled"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              {apt.status === "processing" && (
+                                <button
+                                  onClick={() => router.push(`/pos?appointmentId=${apt._id}`)}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100"
+                                  title="Tarik draft nota ke POS"
+                                >
+                                  <ShoppingCart className="w-3.5 h-3.5" />
+                                  POS
+                                </button>
+                              )}
                               <button
                                 onClick={() => openEditModal(apt)}
                                 className="inline-flex items-center justify-center p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-gray-200 rounded-lg transition-colors"
@@ -820,32 +855,40 @@ export default function AppointmentsPage() {
                             </button>
                             {activeDropdown === apt._id && (
                               <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-1">
-                                {apt.status !== "completed" &&
-                                  apt.status !== "cancelled" && (
+                                {apt.status === "confirmed" && (
+                                  <button
+                                    onClick={() => { handleStatusUpdate(apt._id, "processing"); setActiveDropdown(null); }}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-semibold text-white bg-indigo-700"
+                                  >
+                                    <Play className="w-4 h-4" /> Processing
+                                  </button>
+                                )}
+                                {["confirmed", "processing"].includes(apt.status) && (
+                                  <button
+                                    onClick={() => { handleStatusUpdate(apt._id, "no-show"); setActiveDropdown(null); }}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                                  >
+                                    <EyeOff className="w-4 h-4" /> No Show
+                                  </button>
+                                )}
+                                {!["completed", "cancelled", "no-show"].includes(apt.status) && (
+                                  <button
+                                    onClick={() => { setCancelTarget(apt); setCancelReason(""); setActiveDropdown(null); }}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50"
+                                  >
+                                    <Ban className="w-4 h-4" /> Cancelled
+                                  </button>
+                                )}
+                                {apt.status === "processing" && (
                                     <button
                                       onClick={() => {
-                                        router.push(
-                                          `/pos?appointmentId=${apt._id}`,
-                                        );
+                                        router.push(`/pos?appointmentId=${apt._id}`);
                                       }}
                                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-semibold text-blue-700 bg-blue-50/50 hover:bg-blue-100 transition-colors"
                                     >
-                                      <ShoppingCart className="w-4 h-4" />{" "}
-                                      Lanjut ke POS
+                                      <ShoppingCart className="w-4 h-4" /> POS
                                     </button>
                                   )}
-                                {apt.status !== "completed" && (
-                                  <button
-                                    onClick={() => {
-                                      handleStatusUpdate(apt._id, "completed");
-                                      setActiveDropdown(null);
-                                    }}
-                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-green-600 hover:bg-green-50 transition-colors"
-                                  >
-                                    <CheckCircle className="w-4 h-4" /> Turn
-                                    Completed
-                                  </button>
-                                )}
                                 <button
                                   onClick={() => {
                                     openEditModal(apt);
@@ -891,7 +934,7 @@ export default function AppointmentsPage() {
                             </p>
                             <p className="font-medium flex items-center gap-1.5">
                               <User className="w-3.5 h-3.5 text-blue-400" />
-                              {apt.staff.name}
+                              {apt.staff?.name || "—"}
                             </p>
                           </div>
                         </div>
@@ -918,10 +961,14 @@ export default function AppointmentsPage() {
                               className={`text-[10px] uppercase tracking-widest font-black px-2.5 py-1 rounded-full border ${
                                 apt.status === "confirmed"
                                   ? "bg-green-50 text-green-700 border-green-200"
-                                  : apt.status === "completed"
+                                  : apt.status === "processing"
+                                    ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                    : apt.status === "completed"
                                     ? "bg-blue-50 text-blue-700 border-blue-200"
                                     : apt.status === "pending"
                                       ? "bg-yellow-50 text-yellow-700 border-yellow-200"
+                                      : apt.status === "cancelled" || apt.status === "no-show"
+                                        ? "bg-red-50 text-red-700 border-red-200"
                                       : "bg-gray-100 text-gray-700 border-gray-200"
                               }`}
                             >
@@ -1069,14 +1116,6 @@ export default function AppointmentsPage() {
                 }))}
               />
             </div>
-            <SearchableSelect
-              label="Staff"
-              placeholder="Select Staff"
-              required
-              value={formData.staffId}
-              onChange={(value) => setFormData({ ...formData, staffId: value })}
-              options={staffList.map((s) => ({ value: s._id, label: s.name }))}
-            />
           </div>
 
           <MultiSearchableSelect
@@ -1097,48 +1136,24 @@ export default function AppointmentsPage() {
           <div className="mt-6">
             <label className="block text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-blue-900" />
-              Select Available Time Slot
-              {formData.staffId && formData.date && loadingSlots && (
-                <span className="text-xs font-normal text-gray-400 animate-pulse">
-                  (Updating slots...)
-                </span>
-              )}
+              Jam (jam buka salon 08:00–20:00)
             </label>
-
-            {formData.staffId && formData.date ? (
-              availableSlots.length > 0 ? (
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 p-3 bg-gray-50 border border-gray-200 rounded-xl max-h-48 overflow-y-auto shadow-inner">
-                  {availableSlots.map((slot, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() =>
-                        setFormData({ ...formData, startTime: slot.startTime })
-                      }
-                      className={`px-3 py-2.5 text-xs font-bold rounded-lg border transition-all duration-200 ${
-                        formData.startTime === slot.startTime
-                          ? "bg-blue-900 text-white border-blue-900 shadow-lg scale-105"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50"
-                      }`}
-                    >
-                      {slot.startTime}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="p-8 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 text-sm text-gray-500 text-center">
-                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                  {loadingSlots
-                    ? "Loading available spots..."
-                    : "No available slots for this date/staff."}
-                </div>
-              )
-            ) : (
-              <div className="p-8 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 text-sm text-gray-500 text-center">
-                <User className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                Please select staff and date to view availability
-              </div>
-            )}
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 p-3 bg-gray-50 border border-gray-200 rounded-xl max-h-48 overflow-y-auto shadow-inner">
+              {SALON_SLOTS.map((slot) => (
+                <button
+                  key={slot}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, startTime: slot })}
+                  className={`px-3 py-2.5 text-xs font-bold rounded-lg border transition-all duration-200 ${
+                    formData.startTime === slot
+                      ? "bg-blue-900 text-white border-blue-900 shadow-lg scale-105"
+                      : "bg-white text-gray-700 border-gray-300 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50"
+                  }`}
+                >
+                  {slot}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="mt-6 p-4 bg-gradient-to-br from-blue-900 to-indigo-900 rounded-2xl text-white shadow-xl">
@@ -1189,9 +1204,6 @@ export default function AppointmentsPage() {
               options={[
                 { value: "pending", label: "Pending" },
                 { value: "confirmed", label: "Confirmed" },
-                { value: "completed", label: "Completed" },
-                { value: "cancelled", label: "Cancelled" },
-                { value: "no-show", label: "No-show" },
               ]}
             />
             <FormInput
@@ -1204,9 +1216,23 @@ export default function AppointmentsPage() {
             />
           </div>
 
+          {editingAppointment?.statusHistory && editingAppointment.statusHistory.length > 0 && (
+            <div className="mt-4 border border-gray-100 rounded-xl p-3 bg-gray-50">
+              <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Riwayat status</p>
+              <ul className="space-y-1 max-h-32 overflow-y-auto">
+                {editingAppointment.statusHistory.map((h, i) => (
+                  <li key={i} className="text-xs text-gray-700">
+                    {h.at ? format(new Date(h.at), "dd MMM yyyy HH:mm") : "—"} · <b>{h.status}</b>
+                    {h.note ? ` — ${h.note}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="flex flex-col-reverse sm:flex-row items-center justify-between gap-4 mt-6">
             <div className="flex items-center gap-3 w-full sm:w-auto">
-              {editingAppointment && (
+              {editingAppointment?.status === "processing" && (
                 <button
                   type="button"
                   onClick={() => router.push(`/pos?appointmentId=${editingAppointment._id}`)}
@@ -1236,6 +1262,31 @@ export default function AppointmentsPage() {
             </div>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={!!cancelTarget}
+        onClose={() => { setCancelTarget(null); setCancelReason(""); }}
+        title="Batalkan appointment"
+      >
+        <p className="text-sm text-gray-600 mb-3">Alasan pembatalan wajib diisi.</p>
+        <FormInput
+          label="Alasan"
+          value={cancelReason}
+          onChange={(e) => setCancelReason(e.target.value)}
+          placeholder="Contoh: customer reschedule"
+        />
+        <div className="flex justify-end gap-2 mt-4">
+          <button type="button" className="px-4 py-2 border rounded-lg" onClick={() => { setCancelTarget(null); setCancelReason(""); }}>Batal</button>
+          <button
+            type="button"
+            className="px-4 py-2 bg-red-600 text-white rounded-lg font-bold disabled:opacity-50"
+            disabled={!cancelReason.trim()}
+            onClick={() => cancelTarget && handleStatusUpdate(cancelTarget._id, "cancelled", { cancelReason: cancelReason.trim() })}
+          >
+            Simpan cancelled
+          </button>
+        </div>
       </Modal>
 
       {/* New Customer Modal */}
